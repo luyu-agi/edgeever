@@ -1,6 +1,3 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createGoogle } from "@ai-sdk/google";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type {
   AiAction,
   AiDiscoveredModel,
@@ -11,8 +8,7 @@ import type {
   AiTargetLanguage,
   AiTone,
 } from "@edgeever/shared";
-import { getDefaultAiPromptSeed } from "@edgeever/shared";
-import { generateText, streamText } from "ai";
+import { getDefaultAiPromptSeed, getDefaultAiTagSuggestionPrompt } from "@edgeever/shared";
 import { AppError } from "./app-error";
 import { decryptSecret } from "./secret-encryption";
 import type { DatabaseAdapter } from "./storage-contract";
@@ -132,6 +128,17 @@ export const getDefaultAiModelId = async (db: DatabaseAdapter, workspaceId: stri
   return row?.default_model_id ?? null;
 };
 
+export const getAiTagSuggestionPrompt = async (
+  db: DatabaseAdapter,
+  workspaceId: string,
+  locale?: string,
+) => {
+  const row = await db.prepare(
+    `SELECT tag_suggestion_prompt FROM ai_workspace_settings WHERE workspace_id = ? LIMIT 1`,
+  ).bind(workspaceId).first<{ tag_suggestion_prompt: string | null }>();
+  return row?.tag_suggestion_prompt?.trim() || getDefaultAiTagSuggestionPrompt(locale);
+};
+
 export const mapAiModelConfig = (row: AiModelConfigRow): AiModelConfig => ({
   id: row.id,
   providerConfigId: row.provider_config_id,
@@ -157,8 +164,9 @@ export const getAiSettings = async (
   workspaceId: string,
   encryptionConfigured: boolean,
   readOnly: boolean,
+  locale?: string,
 ): Promise<AiSettings> => {
-  const [providersResult, modelsResult, defaultModelId] = await Promise.all([
+  const [providersResult, modelsResult, defaultModelId, promptRow] = await Promise.all([
     db.prepare(
       `${selectProviderSql} WHERE workspace_id = ? ORDER BY created_at ASC, id ASC`,
     ).bind(workspaceId).all<AiProviderConfigRow>(),
@@ -170,12 +178,19 @@ export const getAiSettings = async (
        ORDER BY created_at ASC, id ASC`,
     ).bind(workspaceId).all<AiModelConfigRow>(),
     getDefaultAiModelId(db, workspaceId),
+    db.prepare(
+      `SELECT tag_suggestion_prompt FROM ai_workspace_settings WHERE workspace_id = ? LIMIT 1`,
+    ).bind(workspaceId).first<{ tag_suggestion_prompt: string | null }>(),
   ]);
+
+  const customizedPrompt = promptRow?.tag_suggestion_prompt?.trim() || null;
 
   return {
     providers: providersResult.results.map((provider) =>
       mapAiProviderConfig(provider, modelsResult.results)),
     defaultModelId,
+    tagSuggestionPrompt: customizedPrompt ?? getDefaultAiTagSuggestionPrompt(locale),
+    tagSuggestionPromptCustomized: Boolean(customizedPrompt),
     encryptionConfigured,
     readOnly,
   };
@@ -183,26 +198,19 @@ export const getAiSettings = async (
 
 export const normalizeAiBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
 
-export const createAiModel = (config: {
+const loadAiRuntime = () => import("./ai-runtime");
+
+export const createAiModel = async (config: {
   provider: AiProvider;
   baseUrl: string;
   apiKey: string;
   modelId: string;
 }) => {
-  const baseURL = normalizeAiBaseUrl(config.baseUrl);
-  switch (config.provider) {
-    case "anthropic":
-      return createAnthropic({ baseURL, apiKey: config.apiKey })(config.modelId);
-    case "google":
-      return createGoogle({ baseURL, apiKey: config.apiKey })(config.modelId);
-    default:
-      return createOpenAICompatible({
-        name: "edgeever-openai-compatible",
-        baseURL,
-        apiKey: config.apiKey,
-        includeUsage: true,
-      })(config.modelId);
-  }
+  const runtime = await loadAiRuntime();
+  return runtime.createAiModel({
+    ...config,
+    baseUrl: normalizeAiBaseUrl(config.baseUrl),
+  });
 };
 
 export const loadDefaultAiModel = async (
@@ -319,13 +327,19 @@ export const testAiModel = async (config: {
   baseUrl: string;
   apiKey: string;
   modelId: string;
-}) => generateText({
-  model: createAiModel(config),
-  system: "You are responding to an API connectivity check. Follow the user instruction exactly.",
-  prompt: "Reply with only: OK",
-  maxOutputTokens: 16,
-  abortSignal: AbortSignal.timeout(20_000),
-});
+}) => {
+  const runtime = await loadAiRuntime();
+  return runtime.generateAiText({
+    model: runtime.createAiModel({
+      ...config,
+      baseUrl: normalizeAiBaseUrl(config.baseUrl),
+    }),
+    system: "You are responding to an API connectivity check. Follow the user instruction exactly.",
+    prompt: "Reply with only: OK",
+    maxOutputTokens: 16,
+    abortSignal: AbortSignal.timeout(20_000),
+  });
+};
 
 /**
  * Fallback instructions from the shared seed catalog (same text shown in the prompt library).
@@ -333,15 +347,15 @@ export const testAiModel = async (config: {
  */
 export const aiActionInstructions: Record<Exclude<AiAction, "translate" | "change-tone" | "custom">, string> = {
   summarize: getDefaultAiPromptSeed("summarize")!.instruction,
-  "extract-key-points": getDefaultAiPromptSeed("extract-key-points")!.instruction,
-  "extract-todos": getDefaultAiPromptSeed("extract-todos")!.instruction,
-  "rewrite-proofread": getDefaultAiPromptSeed("rewrite-proofread")!.instruction,
+  "extract-key-points": "提取笔记中最重要的要点，用简洁的 Markdown 列表输出。保持原语言，不要添加原文没有的信息。",
+  "extract-todos": "从笔记中提取明确或隐含的可执行任务，用 Markdown 任务列表（- [ ]）输出。保持原语言，不要编造任务。若没有可执行事项，用原文语言简短说明。",
+  "rewrite-proofread": "改写并校对完整笔记。修正拼写、语法、标点、清晰度与结构，不改变原意。保持原语言与 Markdown 格式。只返回完整修订稿。",
   "improve-writing": getDefaultAiPromptSeed("improve-writing")!.instruction,
-  "fix-spelling-grammar": getDefaultAiPromptSeed("fix-spelling-grammar")!.instruction,
+  "fix-spelling-grammar": "只修正拼写、语法与标点。不要改变语气、结构或含义。保持原语言与 Markdown 格式。只返回修正后的内容。",
   "make-shorter": getDefaultAiPromptSeed("make-shorter")!.instruction,
-  "make-longer": getDefaultAiPromptSeed("make-longer")!.instruction,
+  "make-longer": "扩写内容，补充有用的说明与更顺畅的过渡，但不要编造事实。保持原语言与有用的 Markdown 格式。只返回扩写后的内容。",
   "simplify-language": getDefaultAiPromptSeed("simplify-language")!.instruction,
-  "continue-writing": getDefaultAiPromptSeed("continue-writing")!.instruction,
+  "continue-writing": "从笔记结束处自然续写。只返回新增续写内容，不要重复原文。保持原语言与 Markdown 风格。",
 };
 
 const AI_PROMPT_OUTPUT_INSTRUCTION =
@@ -510,7 +524,7 @@ export const buildAiGenerationPrompt = (input: {
 ].filter(Boolean).join("\n\n");
 
 type AiGenerationRequest = {
-  model: ReturnType<typeof createAiModel>;
+  model: Awaited<ReturnType<typeof createAiModel>>;
   action: AiAction;
   title: string;
   contentMarkdown: string;
@@ -534,6 +548,26 @@ const buildAiGenerationRequest = (input: AiGenerationRequest) => ({
   abortSignal: input.abortSignal,
 });
 
-export const generateAiGeneration = (input: AiGenerationRequest) => generateText(buildAiGenerationRequest(input));
+export const generateAiGeneration = async (input: AiGenerationRequest) => {
+  const runtime = await loadAiRuntime();
+  return runtime.generateAiText(buildAiGenerationRequest(input));
+};
 
-export const streamAiGeneration = (input: AiGenerationRequest) => streamText(buildAiGenerationRequest(input));
+export const streamAiGeneration = async (input: AiGenerationRequest) => {
+  const runtime = await loadAiRuntime();
+  return runtime.streamAiText(buildAiGenerationRequest(input));
+};
+
+export const generateAiTagSuggestions = async (input: {
+  model: Awaited<ReturnType<typeof createAiModel>>;
+  instruction: string;
+  title: string;
+  contentMarkdown: string;
+  currentTags: string[];
+  existingTags: string[];
+  locale?: string;
+  abortSignal?: AbortSignal;
+}) => {
+  const runtime = await loadAiRuntime();
+  return runtime.generateAiTagSuggestionNames(input);
+};

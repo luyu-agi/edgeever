@@ -10,7 +10,8 @@ export type Pane = "notebooks" | "memos" | "editor";
 export type MemoView = "notebook" | "trash";
 export type MemoFilterMode = "all" | "tagged" | "untagged" | "pinned";
 export type MemoSortMode = "updated-desc" | "created-desc" | "title-asc";
-export type NotebookSortMode = "name-asc" | "memo-count-desc" | "updated-desc";
+export type NotebookSortMode = "custom" | "name-asc" | "memo-count-desc" | "updated-desc";
+export type EditorContentAlignment = "start" | "center";
 export type MemoListDensity = "preview" | "compact";
 export type ShortcutAction = "createMemo" | "createNotebook" | "focusSearch" | "focusReplace";
 export type ShortcutBinding = {
@@ -38,115 +39,6 @@ export type NotebookNameDialogState =
   | { mode: "rename"; notebook: Notebook };
 
 export type AppNoticeDialogState = { title: string; description: string };
-
-export type MemoTemplate = {
-  id: string;
-  title: string;
-  description: string;
-  contentMarkdown: string;
-  tags: string[];
-  iconName?: "zap" | "calendar" | "checklist" | "book" | "sun" | "file";
-  themeColor?: {
-    iconBg: string;
-    iconText: string;
-    badgeBg: string;
-    badgeText: string;
-    accentBorder: string;
-  };
-};
-
-export const getMemoTemplates = (t: TFunction): MemoTemplate[] => [
-  {
-    id: "quick-note",
-    title: t("templates.items.quickNote.title"),
-    description: t("templates.items.quickNote.description"),
-    contentMarkdown: t("templates.items.quickNote.contentMarkdown"),
-    tags: ["template", "quick-note"],
-    iconName: "zap",
-    themeColor: {
-      iconBg: "bg-amber-100/80 text-amber-700",
-      iconText: "text-amber-700",
-      badgeBg: "bg-amber-50 text-amber-800 border-amber-200/60",
-      badgeText: "text-amber-800",
-      accentBorder: "hover:border-amber-300/80",
-    },
-  },
-  {
-    id: "meeting",
-    title: t("templates.items.meeting.title"),
-    description: t("templates.items.meeting.description"),
-    contentMarkdown: t("templates.items.meeting.contentMarkdown"),
-    tags: ["template", "meeting"],
-    iconName: "calendar",
-    themeColor: {
-      iconBg: "bg-blue-100/80 text-blue-700",
-      iconText: "text-blue-700",
-      badgeBg: "bg-blue-50 text-blue-800 border-blue-200/60",
-      badgeText: "text-blue-800",
-      accentBorder: "hover:border-blue-300/80",
-    },
-  },
-  {
-    id: "weekly-review",
-    title: t("templates.items.weeklyReview.title"),
-    description: t("templates.items.weeklyReview.description"),
-    contentMarkdown: t("templates.items.weeklyReview.contentMarkdown"),
-    tags: ["template", "weekly-review"],
-    iconName: "checklist",
-    themeColor: {
-      iconBg: "bg-emerald-100/80 text-emerald-700",
-      iconText: "text-emerald-700",
-      badgeBg: "bg-emerald-50 text-emerald-800 border-emerald-200/60",
-      badgeText: "text-emerald-800",
-      accentBorder: "hover:border-emerald-300/80",
-    },
-  },
-  {
-    id: "reading",
-    title: t("templates.items.reading.title"),
-    description: t("templates.items.reading.description"),
-    contentMarkdown: t("templates.items.reading.contentMarkdown"),
-    tags: ["template", "reading"],
-    iconName: "book",
-    themeColor: {
-      iconBg: "bg-purple-100/80 text-purple-700",
-      iconText: "text-purple-700",
-      badgeBg: "bg-purple-50 text-purple-800 border-purple-200/60",
-      badgeText: "text-purple-800",
-      accentBorder: "hover:border-purple-300/80",
-    },
-  },
-  {
-    id: "okr",
-    title: t("templates.items.okr.title"),
-    description: t("templates.items.okr.description"),
-    contentMarkdown: t("templates.items.okr.contentMarkdown"),
-    tags: ["template", "okr"],
-    iconName: "sun",
-    themeColor: {
-      iconBg: "bg-rose-100/80 text-rose-700",
-      iconText: "text-rose-700",
-      badgeBg: "bg-rose-50 text-rose-800 border-rose-200/60",
-      badgeText: "text-rose-800",
-      accentBorder: "hover:border-rose-300/80",
-    },
-  },
-  {
-    id: "post-mortem",
-    title: t("templates.items.postMortem.title"),
-    description: t("templates.items.postMortem.description"),
-    contentMarkdown: t("templates.items.postMortem.contentMarkdown"),
-    tags: ["template", "post-mortem"],
-    iconName: "file",
-    themeColor: {
-      iconBg: "bg-indigo-100/80 text-indigo-700",
-      iconText: "text-indigo-700",
-      badgeBg: "bg-indigo-50 text-indigo-800 border-indigo-200/60",
-      badgeText: "text-indigo-800",
-      accentBorder: "hover:border-indigo-300/80",
-    },
-  },
-];
 
 export const isTextEntryTarget = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
@@ -218,6 +110,7 @@ export const IMAGE_COMPRESSION_STORAGE_KEY = "edgeever.imageCompressionEnabled";
 export const SYNC_INTERVAL_STORAGE_KEY = "edgeever.syncInterval";
 const LEGACY_AUTO_SAVE_INTERVAL_STORAGE_KEY = "edgeever.autoSaveInterval";
 export const DESKTOP_FOCUS_MODE_STORAGE_KEY = "edgeever.desktopFocusMode";
+export const EDITOR_CONTENT_ALIGNMENT_STORAGE_KEY = "edgeever.editorContentAlignment";
 export const MEMO_LIST_DENSITY_STORAGE_KEY = "edgeever.memoListDensity";
 export const MEMO_LIST_WIDTH_STORAGE_KEY = "edgeever.memoListWidth";
 export const NOTEBOOK_SORT_STORAGE_KEY = "edgeever.notebookSort";
@@ -248,9 +141,10 @@ export const getMemoSortOptions = (t: TFunction): Array<{ value: MemoSortMode; l
   { value: "title-asc", label: t("options.memoSort.titleAsc") },
 ];
 
-const NOTEBOOK_SORT_VALUES: NotebookSortMode[] = ["name-asc", "memo-count-desc", "updated-desc"];
+const NOTEBOOK_SORT_VALUES: NotebookSortMode[] = ["custom", "name-asc", "memo-count-desc", "updated-desc"];
 
 export const getNotebookSortOptions = (t: TFunction): Array<{ value: NotebookSortMode; label: string }> => [
+  { value: "custom", label: t("options.notebookSort.custom") },
   { value: "name-asc", label: t("options.notebookSort.nameAsc") },
   { value: "memo-count-desc", label: t("options.notebookSort.memoCountDesc") },
   { value: "updated-desc", label: t("options.notebookSort.updatedDesc") },
@@ -379,6 +273,22 @@ export const readDesktopFocusModePreference = () => {
 export const writeDesktopFocusModePreference = (enabled: boolean) => {
   try {
     window.localStorage.setItem(DESKTOP_FOCUS_MODE_STORAGE_KEY, enabled ? "true" : "false");
+  } catch {
+    // Local storage can be unavailable in private or restricted browser contexts.
+  }
+};
+
+export const readEditorContentAlignmentPreference = (): EditorContentAlignment => {
+  try {
+    return window.localStorage.getItem(EDITOR_CONTENT_ALIGNMENT_STORAGE_KEY) === "center" ? "center" : "start";
+  } catch {
+    return "start";
+  }
+};
+
+export const writeEditorContentAlignmentPreference = (alignment: EditorContentAlignment) => {
+  try {
+    window.localStorage.setItem(EDITOR_CONTENT_ALIGNMENT_STORAGE_KEY, alignment);
   } catch {
     // Local storage can be unavailable in private or restricted browser contexts.
   }
@@ -566,6 +476,10 @@ const compareNotebookUpdatedDesc = (first: Notebook, second: Notebook) => {
 };
 
 export const getNotebookSortComparator = (sortMode: NotebookSortMode): NotebookNodeComparator => {
+  if (sortMode === "custom") {
+    return (first, second) => first.sortOrder - second.sortOrder || compareNotebookNameAsc(first, second);
+  }
+
   if (sortMode === "memo-count-desc") {
     return (first, second) => second.memoCount - first.memoCount || compareNotebookNameAsc(first, second);
   }

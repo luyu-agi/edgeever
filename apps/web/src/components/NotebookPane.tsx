@@ -24,6 +24,7 @@ import {
   Download,
   ExternalLink,
   RotateCcw,
+  Store,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -287,6 +288,7 @@ export const NotebookPane = ({
   onOpenAssets,
   onOpenTemplates,
   onOpenAiPrompts,
+  onOpenPluginMarketplace,
   onOpenTrash,
   onEmptyTrash,
   onOpenSettings,
@@ -322,6 +324,7 @@ export const NotebookPane = ({
   onOpenAssets: () => void;
   onOpenTemplates: () => void;
   onOpenAiPrompts: () => void;
+  onOpenPluginMarketplace: () => void;
   onOpenTrash: () => void;
   onEmptyTrash: () => void;
   onOpenSettings: () => void;
@@ -349,6 +352,11 @@ export const NotebookPane = ({
   const notebookDragScrollFrameRef = useRef<number | null>(null);
   const [expandSiblingsRequest, setExpandSiblingsRequest] = useState<{ parentId: string | null; token: number } | null>(null);
   const [notebookSortMode, setNotebookSortMode] = useState<NotebookSortMode>(readNotebookSortPreference);
+
+  const handleMoveNotebook = useCallback((notebookId: string, targetNotebookId: string, position: NotebookDropPosition) => {
+    setNotebookSortMode("custom");
+    onMoveNotebook(notebookId, targetNotebookId, position);
+  }, [onMoveNotebook]);
 
   const stopNotebookDragAutoScroll = useCallback(() => {
     if (notebookDragScrollFrameRef.current === null) {
@@ -452,11 +460,12 @@ export const NotebookPane = ({
       </header>
 
       <TooltipProvider delayDuration={0} skipDelayDuration={0}>
-        <nav className="grid shrink-0 grid-cols-2 gap-0.5 border-b border-slate-100 px-2 py-1.5 sm:grid-cols-3 lg:grid-cols-5" aria-label={t("notebookPane.secondaryEntries")}>
+        <nav className="grid shrink-0 grid-cols-2 gap-0.5 border-b border-slate-100 px-2 py-1.5 sm:grid-cols-3 lg:grid-cols-6" aria-label={t("notebookPane.secondaryEntries")}>
           <SidebarShortcutButton icon={<Tags className="h-4 w-4" />} label={t("mobileSheets.tags")} onClick={onOpenTags} />
           <SidebarShortcutButton icon={<Archive className="h-4 w-4" />} label={t("mobileSheets.assets")} onClick={onOpenAssets} />
           {showTemplateEntry && <SidebarShortcutButton icon={<LayoutTemplate className="h-4 w-4" />} label={t("nav.templates")} onClick={onOpenTemplates} />}
           <SidebarShortcutButton icon={<Sparkles className="h-4 w-4" />} label={t("nav.prompts")} onClick={onOpenAiPrompts} />
+          <SidebarShortcutButton icon={<Store className="h-4 w-4" />} label={t("plugins.marketplace.title")} onClick={onOpenPluginMarketplace} />
           <SidebarTrashShortcut active={view === "trash"} onOpenTrash={onOpenTrash} onEmptyTrash={onEmptyTrash} />
         </nav>
       </TooltipProvider>
@@ -546,16 +555,24 @@ export const NotebookPane = ({
               <BookPlus className="h-3.5 w-3.5" />
             </button>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  className="flex h-6 w-6 items-center justify-center rounded-md text-slate-500 transition-colors duration-200 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/70"
-                  type="button"
-                  title={t("notebookPane.sortTitle", { label: activeNotebookSortLabel })}
-                  aria-label={t("notebookPane.sortTitle", { label: activeNotebookSortLabel })}
-                >
-                  <ArrowDownWideNarrow className="h-3.5 w-3.5" />
-                </button>
-              </DropdownMenuTrigger>
+              <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        className="flex h-6 w-6 items-center justify-center rounded-md text-slate-500 transition-colors duration-200 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/70"
+                        type="button"
+                        aria-label={t("notebookPane.sortTitle", { label: activeNotebookSortLabel })}
+                      >
+                        <ArrowDownWideNarrow className="h-3.5 w-3.5" />
+                      </button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    {t("notebookPane.sortTitle", { label: activeNotebookSortLabel })}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
               <DropdownMenuContent align="end" className="w-36">
                 {notebookSortOptions.map((option) => (
                   <DropdownMenuCheckboxItem
@@ -585,7 +602,7 @@ export const NotebookPane = ({
                 onCreateNotebook={onCreateNotebook}
                 onRenameNotebook={onRenameNotebook}
                 onDeleteNotebook={onDeleteNotebook}
-                onMoveNotebook={onMoveNotebook}
+                onMoveNotebook={handleMoveNotebook}
                 onMoveMemos={onMoveMemos}
                 onDragScroll={handleNotebookScrollDragOver}
                 expandSiblingsRequest={expandSiblingsRequest}

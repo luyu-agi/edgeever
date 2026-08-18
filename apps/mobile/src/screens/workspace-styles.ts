@@ -1002,30 +1002,6 @@ const baseWorkspaceStyles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
   },
-  templateBadge: {
-    borderRadius: 999,
-    borderWidth: 1,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-  },
-  templateBadgeBuiltIn: {
-    backgroundColor: "#f8fafc",
-    borderColor: "#e2e8f0",
-  },
-  templateBadgeCustom: {
-    backgroundColor: "#ecfdf5",
-    borderColor: "#a7f3d0",
-  },
-  templateBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-  },
-  templateBadgeTextBuiltIn: {
-    color: "#64748b",
-  },
-  templateBadgeTextCustom: {
-    color: "#047857",
-  },
   templateChoiceRow: {
     alignItems: "center",
     borderRadius: 12,
@@ -1235,10 +1211,30 @@ const baseWorkspaceStyles = StyleSheet.create({
     color: "#64748b",
     flex: 1,
     fontSize: 15,
-    lineHeight: 23,
-    minHeight: 36,
+    lineHeight: 20,
     minWidth: 0,
     padding: 0,
+  },
+  createMemoTagsButton: {
+    alignItems: "center",
+    flex: 1,
+    flexDirection: "row",
+    gap: 6,
+    minHeight: 36,
+    minWidth: 0,
+  },
+  createMemoTagsPlaceholder: {
+    color: "#94a3b8",
+  },
+  smartTagButton: {
+    alignItems: "center",
+    borderRadius: 8,
+    height: 34,
+    justifyContent: "center",
+    width: 34,
+  },
+  smartTagButtonSuccess: {
+    backgroundColor: "#ecfdf5",
   },
   createMemoToolButton: {
     alignItems: "center",
@@ -1550,6 +1546,53 @@ const baseWorkspaceStyles = StyleSheet.create({
   },
   notebookPickerRowActive: {
     backgroundColor: "#f1f5f9",
+  },
+  tagPickerSelectedList: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 10,
+  },
+  tagPickerChip: {
+    alignItems: "center",
+    backgroundColor: "#ecfdf5",
+    borderRadius: 999,
+    flexDirection: "row",
+    gap: 4,
+    minHeight: 32,
+    paddingHorizontal: 11,
+  },
+  tagPickerChipText: {
+    color: "#047857",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  tagPickerCreateText: {
+    color: "#047857",
+    fontSize: 13,
+    fontWeight: "800",
+  },
+  tagPickerLoading: {
+    paddingVertical: 28,
+  },
+  tagPickerCheckbox: {
+    alignItems: "center",
+    borderColor: "#cbd5e1",
+    borderRadius: 5,
+    borderWidth: 1,
+    height: 22,
+    justifyContent: "center",
+    width: 22,
+  },
+  tagPickerCheckboxSelected: {
+    backgroundColor: "#16a06e",
+    borderColor: "#16a06e",
+  },
+  tagPickerRowText: {
+    color: "#0f172a",
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700",
   },
   actionSheetHandle: {
     alignSelf: "center",
