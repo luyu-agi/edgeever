@@ -23,7 +23,7 @@ import { isAllowedPrintPreviewUrl } from "./window-open-policy.mjs";
 import { showWindow } from "./window-visibility.mjs";
 import { trayIconPath } from "./tray-icon.mjs";
 import { writeRichClipboard } from "./clipboard-write.mjs";
-import { scheduleMacLocalDataReset } from "./local-data-reset.mjs";
+import { LocalDataResetError, scheduleMacLocalDataReset } from "./local-data-reset.mjs";
 import { buildDesktopDiagnosticIssueUrl, normalizeDesktopDiagnostic } from "./desktop-diagnostics.mjs";
 import electronUpdater from "electron-updater";
 
@@ -426,8 +426,7 @@ const createTray = () => {
     { label: "Show EdgeEver", click: () => showWindow(mainWindow) },
     { label: "Sync now", click: () => sendDesktopCommand("sync-now") },
     { label: "Backup now", click: () => sendDesktopCommand("backup-now") },
-    ...(updateState === "available" ? [{ label: "Download update", click: () => void autoUpdater.downloadUpdate() }] : []),
-    ...(updateState === "downloaded" ? [{ label: "Restart to update", click: () => autoUpdater.quitAndInstall() }] : []),
+    ...(updateState === "downloaded" ? [{ label: "Restart to update", click: () => installDownloadedUpdate() }] : []),
     { type: "separator" },
     { label: "Quit EdgeEver", click: () => { isQuitting = true; app.quit(); } },
   ]));
@@ -500,15 +499,27 @@ const refreshTrayMenu = () => {
   createTray();
 };
 
+const installDownloadedUpdate = () => {
+  if (updateState !== "downloaded") return { started: false };
+  // The normal window close handler hides the app. Mark this as a real quit
+  // before electron-updater closes windows so installation can proceed.
+  isQuitting = true;
+  autoUpdater.quitAndInstall(false, true);
+  return { started: true };
+};
+
 const configureAutoUpdater = () => {
   if (!app.isPackaged || process.env.EDGE_EVER_DISABLE_AUTO_UPDATE === "1") return;
-  autoUpdater.autoDownload = false;
+  autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoRunAppAfterInstall = true;
   autoUpdater.on("update-available", () => { updateState = "available"; refreshTrayMenu(); void writeDiagnostic("update.available"); });
   autoUpdater.on("download-progress", (progress) => { void writeDiagnostic("update.download-progress", { percent: progress.percent }); });
   autoUpdater.on("update-downloaded", () => { updateState = "downloaded"; refreshTrayMenu(); void writeDiagnostic("update.downloaded"); });
-  autoUpdater.on("error", (error) => { void writeDiagnostic("update.error", { message: error.message }); });
-  void autoUpdater.checkForUpdates().catch((error) => writeDiagnostic("update.check-failed", { message: error.message }));
+  autoUpdater.on("error", (error) => { isQuitting = false; void writeDiagnostic("update.error", { message: error.message }); });
+  void autoUpdater.checkForUpdates()
+    .then((result) => result?.downloadPromise?.catch((error) => writeDiagnostic("update.download-failed", { message: error.message })))
+    .catch((error) => writeDiagnostic("update.check-failed", { message: error.message }));
 };
 
 const startSidecar = async (accountId = null) => {
@@ -819,34 +830,61 @@ app.whenReady().then(async () => {
     if (requestedUserDataDirectory) throw new Error("Local data reset is unavailable with a custom user-data directory");
     if (localDataResetScheduled) return { scheduled: true };
 
-    localDataResetScheduled = true;
-    isQuitting = true;
-    shutdownCleanupStarted = true;
-    if (sidecarRestartTimer) {
-      clearTimeout(sidecarRestartTimer);
-      sidecarRestartTimer = null;
-    }
-    tray?.destroy();
-
     try {
-      await stopSidecar();
-      await Promise.allSettled([
-        session.defaultSession.clearStorageData(),
-        session.defaultSession.clearCache(),
-      ]);
-      scheduleMacLocalDataReset({
+      await scheduleMacLocalDataReset({
         appDataDirectory: app.getPath("appData"),
-        executablePath: process.execPath,
+        executablePath: app.getPath("exe"),
         parentPid: process.pid,
         userDataDirectory: app.getPath("userData"),
       });
     } catch (error) {
-      localDataResetScheduled = false;
-      isQuitting = false;
-      shutdownCleanupStarted = false;
-      throw error;
+      await writeDiagnostic("local-data-reset.schedule-failed", {
+        code: error instanceof LocalDataResetError ? error.code : "unexpected",
+        message: error instanceof Error ? error.message : String(error),
+        cause: error instanceof LocalDataResetError && error.cause instanceof Error ? error.cause.message : undefined,
+      });
+      return {
+        scheduled: false,
+        errorCode: error instanceof LocalDataResetError ? error.code : "unexpected",
+      };
     }
 
+    // Only begin shutting down once the detached reset helper has definitely
+    // started. From this point on, exiting lets that helper remove userData and
+    // relaunch the app, so non-critical cleanup failures must not strand the
+    // application in a half-stopped state.
+    localDataResetScheduled = true;
+    isQuitting = true;
+    shutdownCleanupStarted = true;
+    const forcedExitTimer = setTimeout(() => app.exit(0), 5000);
+    forcedExitTimer.unref();
+    if (sidecarRestartTimer) {
+      clearTimeout(sidecarRestartTimer);
+      sidecarRestartTimer = null;
+    }
+    try {
+      tray?.destroy();
+      tray = null;
+    } catch (error) {
+      void writeDiagnostic("local-data-reset.tray-cleanup-failed", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    await stopSidecar().catch((error) => writeDiagnostic("local-data-reset.sidecar-stop-failed", {
+      message: error instanceof Error ? error.message : String(error),
+    }));
+    const storageResults = await Promise.allSettled([
+      Promise.resolve().then(() => session.defaultSession.clearStorageData()),
+      Promise.resolve().then(() => session.defaultSession.clearCache()),
+    ]);
+    const storageFailure = storageResults.find((result) => result.status === "rejected");
+    if (storageFailure) {
+      void writeDiagnostic("local-data-reset.storage-cleanup-failed", {
+        message: storageFailure.reason instanceof Error ? storageFailure.reason.message : String(storageFailure.reason),
+      });
+    }
+
+    clearTimeout(forcedExitTimer);
     setTimeout(() => app.exit(0), 50).unref();
     return { scheduled: true };
   });
@@ -870,7 +908,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("desktop:update-status", () => ({ state: updateState }));
   ipcMain.handle("desktop:download-update", () => autoUpdater.downloadUpdate());
-  ipcMain.handle("desktop:install-update", () => autoUpdater.quitAndInstall());
+  ipcMain.handle("desktop:install-update", () => installDownloadedUpdate());
   ipcMain.handle("desktop:stage-resource", async (_event, input) => {
     const { memoId, name, type, bytes } = normalizeStagedResourceInput(input);
     const id = `stage_${Date.now()}_${Math.random().toString(36).slice(2)}`;

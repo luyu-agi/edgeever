@@ -38,6 +38,7 @@ import {
   FileCode2,
   Printer,
   Link2,
+  Share2,
   Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -79,6 +80,15 @@ import { EditorToolbar } from "./EditorToolbar";
 import { EditorOutline } from "./EditorOutline";
 import { EditorTagPicker } from "./EditorTagPicker";
 import { useAiBubbleMenu } from "./editor/useAiBubbleMenu";
+import {
+  createSlashCommandExtension,
+  type SlashCommandActions,
+  type SlashCommandLabels,
+} from "./editor/SlashCommandMenu";
+import {
+  createNoteLinkSuggestionExtension,
+  type NoteLinkSuggestionLabels,
+} from "./editor/NoteLinkSuggestion";
 import { WeChatIcon } from "./WeChatIcon";
 import { ThemeToggle } from "./ThemeToggle";
 import { useEditorTheme } from "./ThemeProvider";
@@ -86,7 +96,8 @@ import { sanitizeAndScopeCss } from "@/lib/css-sandbox";
 import { RevisionHistoryDialog } from "./dialogs/RevisionHistoryDialog";
 import { ExternalLinkDialog } from "./dialogs/ExternalLinkDialog";
 import { memoShareQueryKey, ShareMemoDialog } from "./dialogs/ShareMemoDialog";
-import { AiAssistantDialog } from "./dialogs/AiAssistantDialog";
+import { ShareNoteImageDialog, type ShareNoteImageSource } from "./dialogs/ShareNoteImageDialog";
+import { AiAssistantDialog, type AiAssistantAnchor } from "./dialogs/AiAssistantDialog";
 import { api } from "@/lib/api";
 import { isDesktopResourceRuntime, stageDesktopResource, toDesktopResourceUrl } from "@/lib/desktop-resources";
 import { cn, formatDateTime, parseTagsText } from "@/lib/utils";
@@ -124,26 +135,34 @@ import { shouldAcceptRemoteMemoDetail } from "@/lib/memo-detail-freshness";
 import type { EdgeEverRepository } from "@/lib/repository";
 import {
   EDITOR_LOCAL_SAVE_DELAY_MS,
+  formatShortcutBinding,
   getEditableMemoTitle,
   getNotebookMoveOptions,
   type EditorContentAlignment,
   type MemoDocumentActionRequest,
+  type ShortcutSettings,
 } from "@/lib/app-helpers";
 import { copyEditorToWeChat, copyMarkdownToWeChat } from "@/lib/wechat-copy";
 import { ThemeBlock } from "./ThemeBlock";
 import { SystemInfoDialog } from "./SystemInfoDialog";
-import { fetchLatestRelease, isVersionOutdated } from "@/lib/version-check";
-import { RELEASE_STATUS_EVENT } from "@/lib/release-notice";
+import { useDeployedUpdateNotice } from "@/hooks/useDeployedUpdateNotice";
 import { downloadMarkdownFile } from "@/lib/note-markdown-export";
 import { NOTE_HTML_FULL_STYLES } from "@/lib/note-html-export-assets";
 import { downloadNoteHtmlFile, getHtmlImageEmbedNoticeKind } from "@/lib/note-html-export";
 import { openNotePrintPreview, serializeNoteDocumentForPrint } from "@/lib/note-print";
+import type { NoteImageFormat } from "@/lib/note-image-export";
+import { getAiSlashCommandStart, saveAndSyncEditor, shouldOpenAiFromSpace } from "@/lib/editor-shortcuts";
+import {
+  AI_SPACE_SHORTCUT_CHANGED_EVENT,
+  readAiSpaceShortcutPreference,
+} from "@/lib/ai-space-shortcut-preference";
 import { isBrowserOffline } from "@/lib/network-status";
 import {
   EDITOR_LINK_OPEN_MODE_CHANGED_EVENT,
   getStoredEditorLinkOpenMode,
   resolveEditorLinkRequireModifier,
   shouldOpenEditorLink,
+  shouldOpenInternalNoteLink,
   shouldShowEditorLinkOpenHint,
   type EditorLinkOpenMode,
 } from "@/lib/editor-link-click";
@@ -152,12 +171,14 @@ import {
   insertMarkdownSnippet,
   isAttachmentLinkHref,
 } from "@/lib/editor-external-link";
+import { insertAiDraftAtTextCursor } from "@/lib/ai-draft-insertion";
 import { processFilesSequentially } from "@/lib/file-batch";
 import { MEMO_ID_REMAPPED_EVENT, MEMO_SYNC_ACKNOWLEDGED_EVENT } from "@/lib/sync-events";
 import { useStandaloneMobileEditor } from "@/hooks/useStandaloneMobileEditor";
 import { statusSettleMotion } from "@/lib/motion";
 import {
   getRichTextAiSelectionContext,
+  getRichTextAiReplacementRange,
   getRichTextAiSelectionReplacement,
   normalizeAiSelectionReplacement,
 } from "@/lib/ai-selection-replacement";
@@ -175,10 +196,12 @@ import {
   createNoteSearchHighlightPlugin,
   formatNoteSearchMatchLabel,
   getNextSearchMatchIndex,
+  getSearchNavigationIdentity,
   getSearchMatchesFromDocument,
   NOTE_SEARCH_HIGHLIGHT_PLUGIN_KEY,
   type NoteSearchMatch,
 } from "./editor/note-search";
+import { getEditorScrollProgress, restoreEditorScrollProgress } from "./editor/editor-mode-scroll";
 import { useEditorSaveStatus } from "./editor/useEditorSaveStatus";
 import { resolveEditorDraftState } from "./editor/editor-draft-state";
 import type { EdgeEverPluginHost, PluginEditorAdapter } from "@/lib/plugins/plugin-host";
@@ -243,6 +266,11 @@ type AiSelectionContext = {
   to: number;
   contentMarkdown: string;
   isInline: boolean;
+};
+
+type AiInsertionTarget = {
+  kind: "markdown" | "plain" | "rich";
+  position: number;
 };
 
 const getAttachmentLinkFromEventTarget = (target: EventTarget | null) =>
@@ -627,6 +655,11 @@ type EditorPaneProps = {
   onSaveAsTemplate: (memo: MemoDetail, name: string) => Promise<void>;
   searchFocusToken: number;
   replaceFocusToken: number;
+  aiAssistantOpenToken: number;
+  saveAndSyncToken: number;
+  editorModeToggleToken: number;
+  shortcutSettings: ShortcutSettings;
+  onSyncRequested: () => Promise<void>;
   documentActionRequest?: MemoDocumentActionRequest | null;
   onDocumentActionConsumed?: (requestId: number) => void;
   selectionActionBar?: ReactNode;
@@ -694,6 +727,11 @@ const RichEditorPane = ({
   onSaveAsTemplate,
   searchFocusToken,
   replaceFocusToken,
+  aiAssistantOpenToken,
+  saveAndSyncToken,
+  editorModeToggleToken,
+  shortcutSettings,
+  onSyncRequested,
   documentActionRequest,
   onDocumentActionConsumed,
   selectionActionBar,
@@ -729,11 +767,15 @@ const RichEditorPane = ({
   const [imagePreview, setImagePreview] = useState<ImagePreviewRequestDetail | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [imageShareOpen, setImageShareOpen] = useState(false);
+  const [imageShareSource, setImageShareSource] = useState<ShareNoteImageSource | null>(null);
   const [aiAssistantOpen, setAiAssistantOpen] = useState(false);
+  const [aiAssistantAnchor, setAiAssistantAnchor] = useState<AiAssistantAnchor>({ left: 24, placement: "below", top: 96 });
   const aiBubbleMenu = useAiBubbleMenu(aiAssistantOpen);
   const [aiSelection, setAiSelection] = useState<AiSelectionContext | null>(null);
+  const [aiInsertionTarget, setAiInsertionTarget] = useState<AiInsertionTarget | null>(null);
   const [systemInfoOpen, setSystemInfoOpen] = useState(false);
-  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const { unseen: deployedUpdateUnseen } = useDeployedUpdateNotice();
   const [mobileNotebookSheetOpen, setMobileNotebookSheetOpen] = useState(false);
   const [notebookUpdatePending, setNotebookUpdatePending] = useState(false);
   const [noteSearchOpen, setNoteSearchOpen] = useState(false);
@@ -782,6 +824,9 @@ const RichEditorPane = ({
   const [mobileImeDebugEvents, setMobileImeDebugEvents] = useState<MobileImeDebugEntry[]>([]);
   const [wechatCopyState, setWechatCopyState] = useState<"idle" | "copying" | "copied" | "error">("idle");
   const [memoIdCopyNotice, setMemoIdCopyNotice] = useState<{ status: "copied" | "error"; id: string } | null>(null);
+  const handledSaveAndSyncTokenRef = useRef(saveAndSyncToken);
+  const handledEditorModeToggleTokenRef = useRef(editorModeToggleToken);
+  const handledAiAssistantOpenTokenRef = useRef(aiAssistantOpenToken);
   const noteLinkModifier = useMemo(
     () => typeof navigator !== "undefined" && /mac|iphone|ipad|ipod/i.test(navigator.platform) ? "⌘" : "Ctrl",
     []
@@ -834,18 +879,6 @@ const RichEditorPane = ({
   const mobileDefaultEditRequested = Boolean(memo?.id && memo.id === mobileDefaultEditMemoId && !readOnly);
   const mobileEditingActive = isMobileEditing || mobileDefaultEditRequested;
 
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetchLatestRelease(controller.signal)
-      .then((release) => setUpdateAvailable(isVersionOutdated(__EDGEEVER_APP_VERSION__, release.version)))
-      .catch(() => undefined);
-    const handleReleaseStatus = () => setUpdateAvailable(true);
-    window.addEventListener(RELEASE_STATUS_EVENT, handleReleaseStatus);
-    return () => {
-      controller.abort();
-      window.removeEventListener(RELEASE_STATUS_EVENT, handleReleaseStatus);
-    };
-  }, []);
   const effectiveReadOnly = readOnly || (isMobileViewport && !mobileEditingActive);
   const useMobilePlainTextEditor = isMobileViewport && mobileEditingActive && !readOnly;
   const useMarkdownSourceEditor = !useMobilePlainTextEditor && isMarkdownMode;
@@ -853,6 +886,8 @@ const RichEditorPane = ({
   const memoRef = useRef<MemoDetail | null>(memo);
   const editSessionRef = useRef<MemoEditSession | null>(null);
   const editorRef = useRef<Editor | null>(null);
+  const openAiAssistantRef = useRef<() => void>(() => undefined);
+  const aiSpaceShortcutEnabledRef = useRef(readAiSpaceShortcutPreference());
   const editorScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const mobileTextAreaRef = useRef<MobilePlainTextElement | null>(null);
   const mobileDraftTimerRef = useRef<number | null>(null);
@@ -863,8 +898,104 @@ const RichEditorPane = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const noteSearchInputRef = useRef<HTMLInputElement | null>(null);
   const noteReplaceInputRef = useRef<HTMLInputElement | null>(null);
+  const noteSearchAutoSelectionRef = useRef<{ editor: Editor; identity: string } | null>(null);
   const markdownTextAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const openExternalLinkDialogRef = useRef<() => void>(() => undefined);
+  const slashCommandLabelsRef = useRef<SlashCommandLabels>({
+    menu: "",
+    empty: "",
+    close: "",
+    groups: { suggested: "", basic: "", insert: "" },
+    items: {
+      ai: "",
+      paragraph: "",
+      "heading-1": "",
+      "heading-2": "",
+      "heading-3": "",
+      "bullet-list": "",
+      "ordered-list": "",
+      "task-list": "",
+      blockquote: "",
+      "code-block": "",
+      divider: "",
+      table: "",
+      "current-date": "",
+      "current-time": "",
+      "current-date-time": "",
+      attachment: "",
+      "note-link": "",
+      "external-link": "",
+    },
+  });
+  slashCommandLabelsRef.current = {
+    menu: t("slashMenu.menu"),
+    empty: t("slashMenu.empty"),
+    close: t("slashMenu.close"),
+    groups: {
+      suggested: t("slashMenu.groups.suggested"),
+      basic: t("slashMenu.groups.basic"),
+      insert: t("slashMenu.groups.insert"),
+    },
+    items: {
+      ai: t("slashMenu.items.ai"),
+      paragraph: t("editorToolbar.paragraph"),
+      "heading-1": t("editorToolbar.heading1"),
+      "heading-2": t("editorToolbar.heading2"),
+      "heading-3": t("editorToolbar.heading3"),
+      "bullet-list": t("editorToolbar.bulletList"),
+      "ordered-list": t("editorToolbar.orderedList"),
+      "task-list": t("editorToolbar.taskList"),
+      blockquote: t("editorToolbar.quote"),
+      "code-block": t("editorToolbar.codeBlock"),
+      divider: t("editorToolbar.horizontalRule"),
+      table: t("editorToolbar.table"),
+      "current-date": t("slashMenu.items.currentDate"),
+      "current-time": t("slashMenu.items.currentTime"),
+      "current-date-time": t("slashMenu.items.currentDateTime"),
+      attachment: t("editorToolbar.attachment"),
+      "note-link": t("editorToolbar.noteLink"),
+      "external-link": t("editorToolbar.externalLink"),
+    },
+  };
+  const slashCommandActionsRef = useRef<SlashCommandActions | null>(null);
+  if (!slashCommandActionsRef.current) {
+    slashCommandActionsRef.current = {
+      openAi: () => openAiAssistantRef.current(),
+      openAttachmentPicker: () => fileInputRef.current?.click(),
+      openExternalLinkPicker: () => openExternalLinkDialogRef.current(),
+      openNoteLinkPicker: () => setNoteLinkPickerOpen(true),
+    };
+  }
+  const slashCommandExtensionRef = useRef<ReturnType<typeof createSlashCommandExtension> | null>(null);
+  if (!slashCommandExtensionRef.current) {
+    slashCommandExtensionRef.current = createSlashCommandExtension({
+      actions: slashCommandActionsRef.current,
+      getLabels: () => slashCommandLabelsRef.current,
+    });
+  }
+  const noteLinkSuggestionLabelsRef = useRef<NoteLinkSuggestionLabels>({
+    menu: "",
+    empty: "",
+    close: "",
+    untitled: "",
+  });
+  noteLinkSuggestionLabelsRef.current = {
+    menu: t("noteLinkPicker.title"),
+    empty: t("noteLinkPicker.empty"),
+    close: t("noteLinkPicker.close"),
+    untitled: t("common.untitledMemo"),
+  };
+  const noteLinkSuggestionExtensionRef = useRef<ReturnType<typeof createNoteLinkSuggestionExtension> | null>(null);
+  if (!noteLinkSuggestionExtensionRef.current) {
+    noteLinkSuggestionExtensionRef.current = createNoteLinkSuggestionExtension({
+      getCurrentMemoId: () => memoRef.current?.id ?? null,
+      getLabels: () => noteLinkSuggestionLabelsRef.current,
+      searchMemos: async (query) => {
+        const result = await repository.listMemos({ q: query, limit: 20 });
+        return result.memos;
+      },
+    });
+  }
   const hydratingRef = useRef(false);
   const hydratedMemoIdRef = useRef<string | null>(null);
   /** Last content source applied to the editor — used to skip redundant setContent. */
@@ -872,6 +1003,22 @@ const RichEditorPane = ({
   const editingMemoIdRef = useRef<string | null>(memo?.id ?? null);
   const imageCompressionEnabledRef = useRef(imageCompressionEnabled);
   const resourceMenuHideTimerRef = useRef<number | null>(null);
+
+  const restoreScrollAfterModeChange = useCallback((targetMode: "markdown" | "rich", progress: number) => {
+    const restore = (attempt: number) => {
+      const target = targetMode === "markdown"
+        ? markdownTextAreaRef.current
+        : editorScrollContainerRef.current;
+
+      if (restoreEditorScrollProgress(target, progress) || attempt >= 2) {
+        return;
+      }
+
+      window.requestAnimationFrame(() => restore(attempt + 1));
+    };
+
+    window.requestAnimationFrame(() => restore(0));
+  }, []);
 
   useEffect(() => {
     const handleMemoIdRemapped = (event: Event) => {
@@ -1097,8 +1244,12 @@ const RichEditorPane = ({
         table: { renderWrapper: true },
       }),
       Placeholder.configure({
-        placeholder: t("editor.placeholder"),
+        placeholder: () => aiSpaceShortcutEnabledRef.current
+          ? t("editor.placeholder")
+          : t("editor.placeholderCommands"),
       }),
+      slashCommandExtensionRef.current,
+      noteLinkSuggestionExtensionRef.current,
     ],
     content: memo
       ? resolveMemoContentDoc(memo.contentJson, memo.contentMarkdown)
@@ -1106,9 +1257,28 @@ const RichEditorPane = ({
     editable: Boolean(memo && !effectiveReadOnly && hydratedEditorMemoId === memo.id),
     editorProps: {
       attributes: {
-        class: "prose prose-slate max-w-none focus:outline-none min-h-[300px] px-4 py-3 sm:px-7",
+        class: "edgeever-note-rich-editor prose prose-slate max-w-none focus:outline-none min-h-[300px] px-4 py-3 sm:px-7",
       },
       handleKeyDown: (view, event) => {
+        const { selection } = view.state;
+        const currentNode = selection.$from.parent;
+        if (aiSpaceShortcutEnabledRef.current && shouldOpenAiFromSpace({
+          altKey: event.altKey,
+          ctrlKey: event.ctrlKey,
+          isComposing: event.isComposing,
+          isEmptyParagraph: currentNode.type.name === "paragraph" && currentNode.content.size === 0,
+          key: event.key,
+          keyCode: event.keyCode,
+          metaKey: event.metaKey,
+          repeat: event.repeat,
+          selectionEmpty: selection.empty,
+          shiftKey: event.shiftKey,
+        })) {
+          event.preventDefault();
+          window.requestAnimationFrame(() => openAiAssistantRef.current());
+          return true;
+        }
+
         const shortcutKey = event.key.toLowerCase();
         if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && shortcutKey === "k") {
           event.preventDefault();
@@ -1125,7 +1295,7 @@ const RichEditorPane = ({
           return false;
         }
 
-        const { from, to } = view.state.selection;
+        const { from, to } = selection;
         if (from === to) {
           return false;
         }
@@ -1143,6 +1313,22 @@ const RichEditorPane = ({
           noteSearchInputRef.current?.focus();
           noteSearchInputRef.current?.select();
         });
+        return true;
+      },
+      handleTextInput: (view, from, to, text) => {
+        if (from !== to) return false;
+        const resolved = view.state.doc.resolve(from);
+        if (resolved.parent.type.name !== "paragraph") return false;
+        const textBefore = view.state.doc.textBetween(resolved.start(), from, "\n", "\n");
+        const commandStart = getAiSlashCommandStart({
+          caretPosition: from,
+          insertedText: text,
+          textBefore,
+        });
+        if (commandStart === null) return false;
+
+        view.dispatch(view.state.tr.delete(commandStart, from));
+        window.requestAnimationFrame(() => openAiAssistantRef.current());
         return true;
       },
       handleClick: (_view, _pos, event) => {
@@ -1203,6 +1389,26 @@ const RichEditorPane = ({
     // transaction and restore another memo's entire document.
     memo?.id,
   ]);
+
+  useEffect(() => {
+    const syncPreference = (event?: Event) => {
+      const detail = event && event.type === AI_SPACE_SHORTCUT_CHANGED_EVENT
+        ? (event as CustomEvent<boolean>).detail
+        : undefined;
+      aiSpaceShortcutEnabledRef.current = typeof detail === "boolean"
+        ? detail
+        : readAiSpaceShortcutPreference();
+      if (isEditorReady(editor)) {
+        editor.view.dispatch(editor.state.tr);
+      }
+    };
+    window.addEventListener(AI_SPACE_SHORTCUT_CHANGED_EVENT, syncPreference);
+    window.addEventListener("storage", syncPreference);
+    return () => {
+      window.removeEventListener(AI_SPACE_SHORTCUT_CHANGED_EVENT, syncPreference);
+      window.removeEventListener("storage", syncPreference);
+    };
+  }, [editor]);
 
   const insertMemoLink = useCallback((target: MemoSummary) => {
     if (!isEditorReady(editor) || effectiveReadOnly || target.id === memo?.id) {
@@ -1445,11 +1651,16 @@ const RichEditorPane = ({
   }, [cancelResourceMenuHide, isMobileViewport, showResourceMenu]);
 
   const showEditorLinkOpenHint = useCallback((target: EventTarget | null) => {
+    const link = getEditorNavigableLinkFromEventTarget(target);
+    if (parseMemoLinkHref(link?.getAttribute("href"))) {
+      setNoteLinkHintPosition(null);
+      return;
+    }
+
     if (!shouldShowEditorLinkOpenHint(Boolean(editor?.isEditable), isMobileViewport, editorLinkOpenMode)) {
       return;
     }
 
-    const link = getEditorNavigableLinkFromEventTarget(target);
     if (link) {
       setNoteLinkHintPosition(getNoteLinkHintPosition(link));
     } else {
@@ -1485,10 +1696,20 @@ const RichEditorPane = ({
   }, [scheduleResourceMenuHide]);
 
   const handleEditorClickCapture = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    const noteLink = getNoteLinkFromEventTarget(event.target);
+    const memoId = parseMemoLinkHref(noteLink?.getAttribute("href"));
+    if (shouldOpenInternalNoteLink(event, memoId)) {
+      event.preventDefault();
+      event.stopPropagation();
+      setNoteLinkHintPosition(null);
+      onOpenMemo?.(memoId as string);
+      return;
+    }
+
     if (event.button === 0 && !event.ctrlKey && !event.metaKey) {
       showEditorLinkOpenHint(event.target);
     }
-  }, [showEditorLinkOpenHint]);
+  }, [onOpenMemo, showEditorLinkOpenHint]);
 
   const handleEditorFocusCapture = useCallback((event: ReactFocusEvent<HTMLDivElement>) => {
     if (showAttachmentMenu(event.target)) return;
@@ -1573,7 +1794,7 @@ const RichEditorPane = ({
   );
 
   const selectNoteSearchMatch = useCallback(
-    (index: number, matches = noteSearchMatches) => {
+    (index: number, matches: NoteSearchMatch[]) => {
       const match = matches[index];
 
       if (!isEditorReady(editor) || !match) {
@@ -1612,7 +1833,7 @@ const RichEditorPane = ({
         }
       });
     },
-    [editor, noteSearchMatches]
+    [editor]
   );
 
   useEffect(() => {
@@ -1632,7 +1853,7 @@ const RichEditorPane = ({
         editor.unregisterPlugin(NOTE_SEARCH_HIGHLIGHT_PLUGIN_KEY);
       }
     };
-  }, [contentSearchQuery, editor, noteSearchIndex, noteSearchMatches, noteSearchOpen, noteSearchQuery]);
+  }, [contentSearchQuery, editor, noteSearchIndex, noteSearchOpen, noteSearchQuery]);
 
   const focusNoteSearchInput = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -1689,11 +1910,11 @@ const RichEditorPane = ({
 
       setNoteSearchIndex((current) => {
         const next = getNextSearchMatchIndex(current, direction, noteSearchMatches.length);
-        selectNoteSearchMatch(next);
+        selectNoteSearchMatch(next, noteSearchMatches);
         return next;
       });
     },
-    [noteSearchMatches.length, selectNoteSearchMatch]
+    [noteSearchMatches, selectNoteSearchMatch]
   );
 
   useEffect(() => {
@@ -1713,14 +1934,35 @@ const RichEditorPane = ({
   }, [openNoteReplace, replaceFocusToken]);
 
   useEffect(() => {
+    if (!isEditorReady(editor)) {
+      return;
+    }
+
+    const source = noteSearchOpen ? "note" : "content";
+    const query = noteSearchOpen ? noteSearchQuery : contentSearchQuery;
+    const matches = noteSearchOpen ? noteSearchMatches : contentSearchMatches;
+    const identity = getSearchNavigationIdentity(memo?.id ?? null, source, query);
+    const previousSelection = noteSearchAutoSelectionRef.current;
+
+    // Match positions change after every document edit. Only a new search,
+    // note, or search source should move the editor selection automatically.
+    if (previousSelection?.editor === editor && previousSelection.identity === identity) {
+      return;
+    }
+
+    noteSearchAutoSelectionRef.current = { editor, identity };
     setNoteSearchIndex(0);
 
-    if (noteSearchOpen && noteSearchMatches[0]) {
-      selectNoteSearchMatch(0, noteSearchMatches);
-    } else if (!noteSearchOpen && contentSearchMatches[0]) {
-      selectNoteSearchMatch(0, contentSearchMatches);
+    if (matches[0]) {
+      selectNoteSearchMatch(0, matches);
     }
-  }, [contentSearchMatches, noteSearchMatches, noteSearchOpen, selectNoteSearchMatch]);
+  }, [contentSearchMatches, contentSearchQuery, editor, memo?.id, noteSearchMatches, noteSearchOpen, noteSearchQuery, selectNoteSearchMatch]);
+
+  useEffect(() => {
+    setNoteSearchIndex((current) => noteSearchMatches.length === 0
+      ? 0
+      : Math.min(current, noteSearchMatches.length - 1));
+  }, [noteSearchMatches.length]);
 
   const replaceAllNoteSearchMatches = useCallback(() => {
     if (!isEditorReady(editor) || effectiveReadOnly || noteSearchMatches.length === 0) {
@@ -1861,37 +2103,77 @@ const RichEditorPane = ({
 
   const openAiAssistant = useCallback(() => {
     let selection: AiSelectionContext | null = null;
+    let insertionTarget: AiInsertionTarget | null = null;
 
     if (useMobilePlainTextEditor) {
       const source = getMobilePlainTextValue();
       const plainTextElement = mobileTextAreaRef.current;
       const from = plainTextElement instanceof HTMLTextAreaElement ? plainTextElement.selectionStart : 0;
       const to = plainTextElement instanceof HTMLTextAreaElement ? plainTextElement.selectionEnd : from;
+      insertionTarget = { kind: "plain", position: to };
       const contentMarkdown = source.slice(from, to).trim();
       if (to > from && contentMarkdown) selection = { kind: "plain", from, to, contentMarkdown };
     } else if (useMarkdownSourceEditor) {
       const from = markdownTextAreaRef.current?.selectionStart ?? 0;
       const to = markdownTextAreaRef.current?.selectionEnd ?? from;
+      insertionTarget = { kind: "markdown", position: to };
       const contentMarkdown = markdownSource.slice(from, to).trim();
       if (to > from && contentMarkdown) selection = { kind: "markdown", from, to, contentMarkdown };
     } else if (isEditorReady(editor)) {
+      insertionTarget = { kind: "rich", position: editor.state.selection.head };
       const richSelection = getRichTextAiSelectionContext(editor.state.doc, editor.state.selection);
       if (richSelection) selection = { kind: "rich", ...richSelection };
     }
 
+    let anchor: AiAssistantAnchor | null = null;
+    if (!useMobilePlainTextEditor && !useMarkdownSourceEditor && isEditorReady(editor)) {
+      try {
+        const coords = editor.view.coordsAtPos(editor.state.selection.head);
+        const placeAbove = coords.bottom > window.innerHeight * 0.58;
+        anchor = {
+          left: coords.left,
+          placement: placeAbove ? "above" : "below",
+          top: placeAbove ? coords.top - 8 : coords.bottom + 8,
+        };
+      } catch {
+        anchor = null;
+      }
+    }
+    if (!anchor) {
+      const fallback = useMarkdownSourceEditor
+        ? markdownTextAreaRef.current?.getBoundingClientRect()
+        : useMobilePlainTextEditor
+          ? mobileTextAreaRef.current?.getBoundingClientRect()
+          : editorScrollContainerRef.current?.getBoundingClientRect();
+      anchor = {
+        left: fallback?.left ?? 24,
+        placement: "below",
+        top: Math.min((fallback?.top ?? 72) + 48, window.innerHeight - 120),
+      };
+    }
+
+    setAiAssistantAnchor(anchor);
     setAiSelection(selection);
+    setAiInsertionTarget(insertionTarget);
     setAiAssistantOpen(true);
   }, [editor, getMobilePlainTextValue, markdownSource, useMarkdownSourceEditor, useMobilePlainTextEditor]);
 
+  useEffect(() => {
+    openAiAssistantRef.current = openAiAssistant;
+  }, [openAiAssistant]);
+
   const handleAiAssistantOpenChange = useCallback((nextOpen: boolean) => {
     setAiAssistantOpen(nextOpen);
-    if (!nextOpen) setAiSelection(null);
+    if (!nextOpen) {
+      setAiSelection(null);
+      setAiInsertionTarget(null);
+    }
   }, []);
 
   const applyAiDraft = useCallback((draft: string, mode: "append" | "replace") => {
     if (mode === "replace" && aiSelection) {
       const replacementDraft = normalizeAiSelectionReplacement(draft);
-      if (!replacementDraft) return;
+      if (!replacementDraft) return false;
 
       if (aiSelection.kind === "plain") {
         const source = getMobilePlainTextValue();
@@ -1913,17 +2195,70 @@ const RichEditorPane = ({
         });
       } else if (aiSelection.kind === "rich" && isEditorReady(editor)) {
         const maxPos = editor.state.doc.content.size;
-        const from = Math.max(1, Math.min(aiSelection.from, maxPos));
-        const to = Math.max(from, Math.min(aiSelection.to, maxPos));
-        editor.chain().focus().insertContentAt(
-          { from, to },
-          getRichTextAiSelectionReplacement(replacementDraft, aiSelection.isInline),
-        ).run();
+        const { from, to } = getRichTextAiReplacementRange(aiSelection.from, aiSelection.to, maxPos);
+        try {
+          const applied = editor.commands.insertContentAt(
+            { from, to },
+            getRichTextAiSelectionReplacement(replacementDraft, aiSelection.isInline),
+          );
+          if (!applied) return false;
+          editor.commands.focus();
+        } catch {
+          return false;
+        }
+      } else {
+        return false;
       }
       markDirty();
       setAiSelection(null);
+      setAiInsertionTarget(null);
       setAiAssistantOpen(false);
-      return;
+      return true;
+    }
+
+    if (mode === "append" && aiInsertionTarget) {
+      const insertionDraft = draft.trim();
+      if (!insertionDraft) return false;
+
+      if (aiInsertionTarget.kind === "plain") {
+        const source = getMobilePlainTextValue();
+        const { next, caret } = insertAiDraftAtTextCursor(source, insertionDraft, aiInsertionTarget.position);
+        setMobilePlainText(next);
+        setMobilePlainTextElementValue(mobileTextAreaRef.current, next);
+        persistCurrentDraft(title, tagsText, next);
+        window.requestAnimationFrame(() => {
+          const plainTextElement = mobileTextAreaRef.current;
+          plainTextElement?.focus();
+          if (plainTextElement instanceof HTMLTextAreaElement) plainTextElement.setSelectionRange(caret, caret);
+        });
+      } else if (aiInsertionTarget.kind === "markdown") {
+        const { next, caret } = insertAiDraftAtTextCursor(markdownSource, insertionDraft, aiInsertionTarget.position);
+        setMarkdownSource(next);
+        window.requestAnimationFrame(() => {
+          markdownTextAreaRef.current?.focus();
+          markdownTextAreaRef.current?.setSelectionRange(caret, caret);
+        });
+      } else if (isEditorReady(editor)) {
+        const position = Math.max(0, Math.min(aiInsertionTarget.position, editor.state.doc.content.size));
+        try {
+          const applied = editor.commands.insertContentAt(
+            position,
+            getRichTextAiSelectionReplacement(insertionDraft, false),
+          );
+          if (!applied) return false;
+          editor.commands.focus();
+        } catch {
+          return false;
+        }
+      } else {
+        return false;
+      }
+
+      markDirty();
+      setAiSelection(null);
+      setAiInsertionTarget(null);
+      setAiAssistantOpen(false);
+      return true;
     }
 
     const current = getCurrentMarkdownForAi();
@@ -1937,12 +2272,20 @@ const RichEditorPane = ({
     } else if (useMarkdownSourceEditor) {
       setMarkdownSource(next);
     } else if (isEditorReady(editor)) {
-      editor.commands.setContent(markdownToDoc(next));
+      try {
+        if (!editor.commands.setContent(markdownToDoc(next))) return false;
+      } catch {
+        return false;
+      }
+    } else {
+      return false;
     }
     markDirty();
     setAiSelection(null);
+    setAiInsertionTarget(null);
     setAiAssistantOpen(false);
-  }, [aiSelection, editor, getCurrentMarkdownForAi, getMobilePlainTextValue, markDirty, markdownSource, persistCurrentDraft, tagsText, title, useMarkdownSourceEditor, useMobilePlainTextEditor]);
+    return true;
+  }, [aiInsertionTarget, aiSelection, editor, getCurrentMarkdownForAi, getMobilePlainTextValue, markDirty, markdownSource, persistCurrentDraft, tagsText, title, useMarkdownSourceEditor, useMobilePlainTextEditor]);
 
   const getCurrentContentJson = useCallback((): TiptapDoc | null => {
     if (useMobilePlainTextEditor) {
@@ -2332,10 +2675,15 @@ const RichEditorPane = ({
       return;
     }
 
+    const scrollProgress = getEditorScrollProgress(
+      isMarkdownMode ? markdownTextAreaRef.current : editorScrollContainerRef.current,
+    );
+
     if (isMarkdownMode) {
       hydratingRef.current = true;
       editor.commands.setContent(markdownToDoc(markdownSource));
       setIsMarkdownMode(false);
+      restoreScrollAfterModeChange("rich", scrollProgress);
       window.setTimeout(() => {
         hydratingRef.current = false;
       }, 0);
@@ -2344,7 +2692,8 @@ const RichEditorPane = ({
 
     setMarkdownSource(docToMarkdown(editor.getJSON() as TiptapDoc));
     setIsMarkdownMode(true);
-  }, [editor, effectiveReadOnly, isMarkdownMode, markdownSource]);
+    restoreScrollAfterModeChange("markdown", scrollProgress);
+  }, [editor, effectiveReadOnly, isMarkdownMode, markdownSource, restoreScrollAfterModeChange]);
 
   const handleMarkdownSourceChange = useCallback((value: string) => {
     setMarkdownSource(value);
@@ -2515,6 +2864,47 @@ const RichEditorPane = ({
     useMobilePlainTextEditor,
   ]);
 
+  const buildImageExportOptions = useCallback((format: NoteImageFormat) => {
+    if (!isEditorReady(editor) || !memo) return;
+    const currentDocument = useMobilePlainTextEditor
+      ? markdownToDoc(getMobilePlainTextValue())
+      : useMarkdownSourceEditor
+        ? markdownToDoc(markdownSource)
+        : editor.getJSON() as TiptapDoc;
+    return {
+      bodyHtml: serializeNoteDocumentForPrint(editor, currentDocument),
+      title: title.trim() || t("common.untitledMemo"),
+      notebook: notebookOptions.find((notebook) => notebook.id === memo.notebookId)?.name ?? "",
+      tags: parseTagsText(tagsText),
+      updatedAt: formatDateTime(memo.updatedAt),
+      language: i18n.resolvedLanguage ?? i18n.language,
+      fallbackTitle: t("common.untitledMemo"),
+      format,
+      styles: NOTE_HTML_FULL_STYLES,
+    };
+  }, [
+    editor,
+    getMobilePlainTextValue,
+    i18n.language,
+    i18n.resolvedLanguage,
+    markdownSource,
+    memo,
+    notebookOptions,
+    t,
+    tagsText,
+    title,
+    useMarkdownSourceEditor,
+    useMobilePlainTextEditor,
+  ]);
+
+  const handleOpenImageShare = useCallback(() => {
+    const options = buildImageExportOptions("png");
+    if (!options) return;
+    const { format: _format, ...source } = options;
+    setImageShareSource(source);
+    setImageShareOpen(true);
+  }, [buildImageExportOptions]);
+
   const handleSaveAsTemplate = useCallback(() => {
     if (!memo) {
       return;
@@ -2565,6 +2955,9 @@ const RichEditorPane = ({
       case "export-pdf":
         handleExportPdf(documentActionRequest.printWindow);
         break;
+      case "share-image":
+        handleOpenImageShare();
+        break;
       case "save-as-template":
         handleSaveAsTemplate();
         break;
@@ -2575,6 +2968,7 @@ const RichEditorPane = ({
     handleExportHtml,
     handleExportMarkdown,
     handleExportPdf,
+    handleOpenImageShare,
     handleSaveAsTemplate,
     hydratedEditorMemoId,
     memo,
@@ -2750,7 +3144,78 @@ const RichEditorPane = ({
   // can starve a recovered draft indefinitely. These members are stable (or
   // primitive) and are safe effect dependencies.
   const mutateSave = saveMutation.mutate;
+  const mutateSaveAsync = saveMutation.mutateAsync;
   const saveMutationPending = saveMutation.isPending;
+
+  const editorShortcutBlocked = Boolean(
+    historyOpen ||
+      shareOpen ||
+      aiAssistantOpen ||
+      systemInfoOpen ||
+      mobileNotebookSheetOpen ||
+      noteLinkPickerOpen ||
+      externalLinkDialogOpen ||
+      resourceDialog ||
+      imagePreview
+  );
+
+  useEffect(() => {
+    if (handledAiAssistantOpenTokenRef.current === aiAssistantOpenToken) return;
+    handledAiAssistantOpenTokenRef.current = aiAssistantOpenToken;
+    if (editorShortcutBlocked || effectiveReadOnly || !memoRef.current) return;
+    openAiAssistant();
+  }, [aiAssistantOpenToken, editorShortcutBlocked, effectiveReadOnly, openAiAssistant]);
+
+  useEffect(() => {
+    if (handledEditorModeToggleTokenRef.current === editorModeToggleToken) {
+      return;
+    }
+
+    handledEditorModeToggleTokenRef.current = editorModeToggleToken;
+    if (editorShortcutBlocked || useMobilePlainTextEditor) {
+      return;
+    }
+
+    handleMarkdownModeChange();
+  }, [editorModeToggleToken, editorShortcutBlocked, handleMarkdownModeChange, useMobilePlainTextEditor]);
+
+  useEffect(() => {
+    if (handledSaveAndSyncTokenRef.current === saveAndSyncToken || saveMutationPending) {
+      return;
+    }
+
+    handledSaveAndSyncTokenRef.current = saveAndSyncToken;
+    if (
+      editorShortcutBlocked ||
+      effectiveReadOnly ||
+      !memoRef.current ||
+      !isEditorReady(editorRef.current) ||
+      saveState === "conflict"
+    ) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        await saveAndSyncEditor({
+          hasUnsavedChanges: hasUnsavedChangesRef.current,
+          save: mutateSaveAsync,
+          sync: onSyncRequested,
+        });
+      } catch {
+        // The save mutation owns its visible error/conflict state. Do not sync
+        // after a failed save because the queue may not contain this snapshot.
+      }
+    })();
+  }, [
+    editorShortcutBlocked,
+    effectiveReadOnly,
+    mutateSaveAsync,
+    onSyncRequested,
+    saveAndSyncToken,
+    saveMutationPending,
+    saveState,
+  ]);
 
   const replaceAttachmentLabel = useCallback((target: AttachmentMenuTarget, filename: string) => {
     const activeEditor = editorRef.current;
@@ -3660,7 +4125,7 @@ const RichEditorPane = ({
               </Button>
             </IconTooltip>
             {!readOnly && (
-              <IconTooltip label={t("aiAssistant.open")}>
+              <IconTooltip label={`${t("aiAssistant.open")} (${formatShortcutBinding(shortcutSettings.openAiAssistant)})`}>
                 <Button className="hidden h-8 w-8 text-emerald-600 transition-colors hover:bg-emerald-50 hover:text-emerald-800 focus-visible:ring-2 focus-visible:ring-emerald-300 sm:inline-flex" size="icon" variant="ghost" aria-label={t("aiAssistant.open")} onClick={openAiAssistant}>
                   <Sparkles className="h-5 w-5" strokeWidth={2.25} />
                 </Button>
@@ -3707,7 +4172,7 @@ const RichEditorPane = ({
             <IconTooltip label={t("systemInfo.title")}>
               <Button className="relative hidden h-8 w-8 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 focus-visible:ring-2 focus-visible:ring-emerald-500/70 min-[1600px]:inline-flex" size="icon" variant="ghost" aria-label={t("systemInfo.title")} onClick={() => setSystemInfoOpen(true)}>
                 <Info className="h-5 w-5" strokeWidth={2.25} />
-                {updateAvailable ? <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-white" /> : null}
+                {deployedUpdateUnseen ? <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-white" /> : null}
               </Button>
             </IconTooltip>
             <PluginToolbarMenu host={pluginHost} onManage={onOpenPluginManager} />
@@ -3812,6 +4277,13 @@ const RichEditorPane = ({
                 >
                   <Printer className="h-4 w-4 text-slate-500" />
                   {t("editor.exportPdf")}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="flex h-9 w-full items-center gap-2 px-3 text-left text-sm text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
+                  onClick={handleOpenImageShare}
+                >
+                  <Share2 className="h-4 w-4 text-slate-500" />
+                  {t("editor.imageShare.action")}
                 </DropdownMenuItem>
                 {readOnly ? (
                   <>
@@ -4006,6 +4478,7 @@ const RichEditorPane = ({
             readOnly={effectiveReadOnly}
             markdownMode={useMarkdownSourceEditor}
             onMarkdownModeChange={handleMarkdownModeChange}
+            markdownModeShortcut={shortcutSettings.toggleEditorMode}
             onPickAttachment={() => fileInputRef.current?.click()}
             onPickExternalLink={openExternalLinkDialog}
             externalLinkActive={externalLinkActive}
@@ -4189,6 +4662,24 @@ const RichEditorPane = ({
                   value={markdownSource}
                   onChange={(event) => handleMarkdownSourceChange(event.target.value)}
                   onKeyDown={(event) => {
+                    if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && !event.nativeEvent.isComposing) {
+                      const caretPosition = event.currentTarget.selectionStart;
+                      const commandStart = getAiSlashCommandStart({
+                        caretPosition,
+                        insertedText: event.key,
+                        textBefore: event.currentTarget.value.slice(0, caretPosition),
+                      });
+                      if (commandStart !== null && event.currentTarget.selectionEnd === caretPosition) {
+                        event.preventDefault();
+                        const next = `${event.currentTarget.value.slice(0, commandStart)}${event.currentTarget.value.slice(caretPosition)}`;
+                        handleMarkdownSourceChange(next);
+                        window.requestAnimationFrame(() => {
+                          markdownTextAreaRef.current?.setSelectionRange(commandStart, commandStart);
+                          openAiAssistant();
+                        });
+                        return;
+                      }
+                    }
                     if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
                       event.preventDefault();
                       openExternalLinkDialog();
@@ -4482,6 +4973,7 @@ const RichEditorPane = ({
 
       <AiAssistantDialog
         open={aiAssistantOpen}
+        anchor={aiAssistantAnchor}
         title={title}
         contentMarkdown={currentMarkdownForAi}
         selectionMarkdown={aiSelection?.contentMarkdown}
@@ -4491,6 +4983,14 @@ const RichEditorPane = ({
       />
 
       <ShareMemoDialog memoId={memo.id} open={shareOpen} onOpenChange={setShareOpen} />
+
+      {imageShareSource && (
+        <ShareNoteImageDialog
+          open={imageShareOpen}
+          source={imageShareSource}
+          onOpenChange={setImageShareOpen}
+        />
+      )}
 
       {mobileNotebookSheetOpen && (
         <MobileNotebookSelectSheet

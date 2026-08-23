@@ -3,21 +3,50 @@ import {
   auditReleaseCommitCoverage,
   buildIssueBody,
   buildReleaseNotes,
+  buildReleaseSummary,
   buildReleaseTitle,
   nextVersion,
   parseReleaseArgs,
+  RELEASE_WORKFLOWS,
   RELEASE_VALIDATIONS,
   resolveReleaseVersion,
   reusedAssetMatches,
   selectPublishedDmg,
+  waitForRun,
 } from "./release.mjs";
 
 describe("release automation", () => {
+  test("prepares and audits the official Docker image with every formal release", () => {
+    expect(RELEASE_WORKFLOWS.docker).toBe("docker-image.yml");
+  });
+
   test("runs the complete project regression suite before release", () => {
     expect(RELEASE_VALIDATIONS).toContainEqual({
       label: "Project regression tests",
       args: ["run", "test"],
     });
+  });
+
+  test("retries transient GitHub status failures while waiting for a workflow", async () => {
+    let attempts = 0;
+    let polls = 0;
+    const result = await waitForRun({
+      repository: "tianma-if/edgeever",
+      runId: 123,
+      label: "Draft assets",
+      viewRun: () => {
+        attempts += 1;
+        if (attempts < 3) throw new Error("transient EOF");
+        return { status: "completed", conclusion: "success", url: "https://example.test/run" };
+      },
+      waitForNextPoll: async () => {
+        polls += 1;
+      },
+    });
+
+    expect(result.conclusion).toBe("success");
+    expect(attempts).toBe(3);
+    expect(polls).toBe(2);
   });
 
   test("parses paired bilingual changes and labels", () => {
@@ -33,6 +62,8 @@ describe("release automation", () => {
         "Run checks in parallel.",
         "--change-zh",
         "并行运行检查。",
+        "--change-locale",
+        "ja-JP:チェックを並列実行します。",
         "--change-commit",
         "abc1234",
       ]),
@@ -42,6 +73,7 @@ describe("release automation", () => {
       labels: ["enhancement"],
       changesEn: ["Run checks in parallel."],
       changesZh: ["并行运行检查。"],
+      localizedChanges: { "ja-JP": ["チェックを並列実行します。"] },
       changeCommits: ["abc1234"],
     });
   });
@@ -160,12 +192,32 @@ describe("release automation", () => {
     expect(notes).toContain("Related Issue: #126");
     expect(notes).toContain("## 🇨🇳 中文说明 / Chinese Changelog");
     expect(notes).toContain("关联 Issue：#126");
+    expect(notes.indexOf("## 🇨🇳 中文说明 / Chinese Changelog"))
+      .toBeLessThan(notes.indexOf("## Key Changes"));
+    expect(notes.indexOf("优化发布流程。"))
+      .toBeLessThan(notes.indexOf("Improve the release flow."));
     expect(notes).not.toContain("## Verification");
     expect(notes).not.toContain("## 验证");
     expect(notes).not.toContain("bun run");
     expect(notes).not.toContain("Version bump");
     expect(notes).not.toContain("release plan");
     expect(notes).not.toContain("\\n");
+  });
+
+  test("builds the in-app summary from the same bilingual release changes", () => {
+    expect(buildReleaseSummary({
+      version: "1.6.55",
+      changesEn: ["Improve the release flow."],
+      changesZh: ["优化发布流程。"],
+      localizedChanges: { "ja-JP": ["リリースフローを改善します。"] },
+    })).toEqual({
+      version: "1.6.55",
+      changes: {
+        "en-US": ["Improve the release flow."],
+        "zh-CN": ["优化发布流程。"],
+        "ja-JP": ["リリースフローを改善します。"],
+      },
+    });
   });
 
   test("builds a bilingual umbrella Issue", () => {

@@ -1,6 +1,6 @@
 {
   "name": "edgeever",
-  "version": "1.32.0",
+  "version": "1.38.0",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -22,6 +22,7 @@
     "dev:api:demo": "bun scripts/local-dev.mjs api demo",
     "dev:self-hosted": "bun --watch scripts/self-hosted-server.mjs",
     "start:self-hosted": "bun scripts/self-hosted-server.mjs",
+    "test:docker-release": "bun test scripts/docker-release.test.mjs scripts/docker-installer.test.mjs scripts/build-cloudflare-worker.test.mjs tests/storage-adapter.test.ts",
     "dev:remote": "concurrently -k -n api,web -c cyan,magenta \"bun run dev:api:remote\" \"bun run dev:web\"",
     "dev:api:remote": "bun scripts/run-wrangler.mjs dev --remote --port 8787",
     "dev:web": "vite --config apps/web/vite.config.ts --host 127.0.0.1 --port 5173",
@@ -52,7 +53,7 @@
     "build:desktop": "EDGE_EVER_DESKTOP_BUILD=1 bun run prepare:desktop:icons && bun run build:web && bun run build:desktop:sidecar && bun run --cwd apps/desktop dist",
     "benchmark:desktop:sidecar": "bun scripts/benchmark-desktop-sidecar.mjs",
     "verify:web-performance": "bun scripts/verify-web-performance.mjs",
-    "test:release-planning": "bun test scripts/plan-native-release.test.mjs scripts/check-native-release-assets.test.mjs scripts/create-mac-update-metadata.test.mjs scripts/desktop-build-workflow.test.mjs scripts/report-native-build-timings.test.mjs scripts/release.test.mjs scripts/validate-store-delivery.test.mjs scripts/store-delivery.test.mjs scripts/download-play-universal-apk.test.mjs scripts/verify-android-apk-signature.test.mjs scripts/desktop-icns.test.mjs scripts/preview-macos-dock-icon.test.mjs apps/web/src/lib/version-check.test.mjs apps/mobile/src/lib/mobile-release.test.ts",
+    "test:release-planning": "bun test scripts/plan-native-release.test.mjs scripts/check-native-release-assets.test.mjs scripts/create-mac-update-metadata.test.mjs scripts/desktop-build-workflow.test.mjs scripts/report-native-build-timings.test.mjs scripts/release.test.mjs scripts/validate-store-delivery.test.mjs scripts/store-delivery.test.mjs scripts/configure-android-package-permissions.test.mjs scripts/download-play-universal-apk.test.mjs scripts/verify-android-apk-signature.test.mjs scripts/desktop-icns.test.mjs scripts/preview-macos-dock-icon.test.mjs apps/web/src/lib/version-check.test.mjs apps/mobile/src/lib/mobile-release.test.ts",
     "release": "bun scripts/release.mjs",
     "publish:stores": "bun scripts/store-delivery.mjs",
     "test:desktop:sidecar": "bun scripts/test-desktop-sidecar.mjs",
@@ -134,6 +135,7 @@
     "@tiptap/extension-table": "3.27.1",
     "@tiptap/react": "latest",
     "@tiptap/starter-kit": "latest",
+    "@tiptap/suggestion": "3.27.1",
     "ai": "^7.0.58",
     "aws4fetch": "^1.0.20",
     "class-variance-authority": "latest",

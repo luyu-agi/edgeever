@@ -13,7 +13,14 @@ export type MemoSortMode = "updated-desc" | "created-desc" | "title-asc";
 export type NotebookSortMode = "custom" | "name-asc" | "memo-count-desc" | "updated-desc";
 export type EditorContentAlignment = "start" | "center";
 export type MemoListDensity = "preview" | "compact";
-export type ShortcutAction = "createMemo" | "createNotebook" | "focusSearch" | "focusReplace";
+export type ShortcutAction =
+  | "createMemo"
+  | "createNotebook"
+  | "focusSearch"
+  | "focusReplace"
+  | "openAiAssistant"
+  | "saveAndSync"
+  | "toggleEditorMode";
 export type ShortcutBinding = {
   key: string;
   ctrlOrMeta: boolean;
@@ -23,7 +30,13 @@ export type ShortcutBinding = {
 export type ShortcutSettings = Record<ShortcutAction, ShortcutBinding>;
 export type MobileBottomNavItem = "home" | "search" | "templates" | "settings";
 export type MemoContextMenuState = { memo: MemoSummary; x: number; y: number };
-export type MemoDocumentAction = "share" | "export-markdown" | "export-html" | "export-pdf" | "save-as-template";
+export type MemoDocumentAction =
+  | "share"
+  | "export-markdown"
+  | "export-html"
+  | "export-pdf"
+  | "share-image"
+  | "save-as-template";
 export type MemoDocumentActionRequest = {
   id: number;
   memoId: string;
@@ -180,6 +193,21 @@ export const getShortcutActionOptions = (
     label: t("shortcuts.actions.focusReplace.label"),
     description: t("shortcuts.actions.focusReplace.description"),
   },
+  {
+    value: "openAiAssistant",
+    label: t("shortcuts.actions.openAiAssistant.label"),
+    description: t("shortcuts.actions.openAiAssistant.description"),
+  },
+  {
+    value: "saveAndSync",
+    label: t("shortcuts.actions.saveAndSync.label"),
+    description: t("shortcuts.actions.saveAndSync.description"),
+  },
+  {
+    value: "toggleEditorMode",
+    label: t("shortcuts.actions.toggleEditorMode.label"),
+    description: t("shortcuts.actions.toggleEditorMode.description"),
+  },
 ];
 
 export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = {
@@ -187,13 +215,24 @@ export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = {
   createNotebook: { key: "n", ctrlOrMeta: true, shift: true, alt: false },
   focusSearch: { key: "f", ctrlOrMeta: true, shift: false, alt: false },
   focusReplace: { key: "h", ctrlOrMeta: true, shift: false, alt: false },
+  openAiAssistant: { key: "j", ctrlOrMeta: true, shift: false, alt: false },
+  saveAndSync: { key: "s", ctrlOrMeta: true, shift: false, alt: false },
+  toggleEditorMode: { key: "/", ctrlOrMeta: true, shift: false, alt: false },
 };
 
 const SHORTCUT_ALIASES: Partial<Record<ShortcutAction, ShortcutBinding[]>> = {
   focusReplace: [{ key: "h", ctrlOrMeta: true, shift: true, alt: false }],
 };
 
-const SHORTCUT_ACTION_VALUES: ShortcutAction[] = ["createMemo", "createNotebook", "focusSearch", "focusReplace"];
+const SHORTCUT_ACTION_VALUES: ShortcutAction[] = [
+  "createMemo",
+  "createNotebook",
+  "focusSearch",
+  "focusReplace",
+  "openAiAssistant",
+  "saveAndSync",
+  "toggleEditorMode",
+];
 
 export const isDefaultMemoTitle = (title: string | null | undefined) => title?.trim() === DEFAULT_MEMO_TITLE;
 

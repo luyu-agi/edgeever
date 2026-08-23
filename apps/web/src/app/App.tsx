@@ -3,9 +3,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Navigate, Route, Routes, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
 import { PwaUpdateNotice } from "@/components/PwaUpdateNotice";
-import { ReleaseUpdateNotice } from "@/components/ReleaseUpdateNotice";
 import { PwaInstallProvider } from "@/components/PwaInstallContext";
 import { PwaIosPrompt } from "@/components/PwaIosPrompt";
+import { DesktopUpdateNotice } from "@/components/DesktopUpdateNotice";
 import { Button } from "@/components/ui/button";
 import {
   api,
@@ -199,16 +199,13 @@ const AuthenticatedWorkspace = () => {
 
   return (
     <Suspense fallback={<AuthLoadingScreen />}>
-      <>
-        <WorkspaceApp
-          authRequired={session.authRequired}
-          demoMode={session.demoMode}
-          isLoggingOut={logoutMutation.isPending}
-          user={session.user}
-          onLogout={() => logoutMutation.mutate()}
-        />
-        <ReleaseUpdateNotice />
-      </>
+      <WorkspaceApp
+        authRequired={session.authRequired}
+        demoMode={session.demoMode}
+        isLoggingOut={logoutMutation.isPending}
+        user={session.user}
+        onLogout={() => logoutMutation.mutate()}
+      />
     </Suspense>
   );
 };
@@ -233,6 +230,7 @@ export const App = () => {
         <Route path="/ai-prompts" element={<AuthenticatedWorkspace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <DesktopUpdateNotice />
       <PwaUpdateNotice />
       <PwaIosPrompt />
     </PwaInstallProvider>

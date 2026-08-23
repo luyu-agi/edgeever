@@ -21,9 +21,10 @@ const DEFAULT_REPOSITORY = "tianma-if/edgeever";
 const VERSION_BUMPS = new Set(["patch", "minor", "major"]);
 const POLL_INTERVAL_MS = 10_000;
 const RUN_DISCOVERY_TIMEOUT_MS = 60_000;
-const RELEASE_WORKFLOWS = {
+export const RELEASE_WORKFLOWS = {
   desktop: "desktop-build.yml",
   mobile: "mobile-build.yml",
+  docker: "docker-image.yml",
   demo: "deploy-demo.yml",
 };
 
@@ -41,6 +42,7 @@ export const RELEASE_VALIDATIONS = [
       "scripts/release.test.mjs",
       "scripts/validate-store-delivery.test.mjs",
       "scripts/store-delivery.test.mjs",
+      "scripts/configure-android-package-permissions.test.mjs",
       "scripts/download-play-universal-apk.test.mjs",
       "scripts/desktop-icns.test.mjs",
       "apps/web/src/lib/version-check.test.mjs",
@@ -69,6 +71,7 @@ Options:
   --label <label>            Required Issue label; may be repeated
   --change-en <text>         Required English release bullet; may be repeated
   --change-zh <text>         Required Chinese release bullet; may be repeated
+  --change-locale <tag:text> Optional localized bullet; repeat once per change and locale
   --change-commit <sha,...>  Commits covered by the corresponding bilingual bullet
   --ignore-commit <sha:why>  Explicitly exclude a non-user-facing commit; may be repeated
   --skip-install             Do not install the final DMG after publication
@@ -84,6 +87,7 @@ export const parseReleaseArgs = (argv) => {
     labels: [],
     changesEn: [],
     changesZh: [],
+    localizedChanges: [],
     changeCommits: [],
     ignoredCommits: [],
     skipInstall: false,
@@ -98,6 +102,7 @@ export const parseReleaseArgs = (argv) => {
     ["--label", "labels"],
     ["--change-en", "changesEn"],
     ["--change-zh", "changesZh"],
+    ["--change-locale", "localizedChanges"],
     ["--change-commit", "changeCommits"],
     ["--ignore-commit", "ignoredCommits"],
   ]);
@@ -157,6 +162,25 @@ export const parseReleaseArgs = (argv) => {
   if (options.changesEn.length !== options.changeCommits.length) {
     throw new Error("Each bilingual change requires one corresponding --change-commit value.");
   }
+  const localizedChanges = {};
+  for (const value of options.localizedChanges) {
+    const separator = value.indexOf(":");
+    const locale = separator === -1 ? "" : value.slice(0, separator).trim();
+    const change = separator === -1 ? "" : value.slice(separator + 1).trim();
+    if (!/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(locale) || !change) {
+      throw new Error('--change-locale must use "<locale>:<user-facing change>".');
+    }
+    if (["en-us", "zh-cn"].includes(locale.toLowerCase())) {
+      throw new Error("Use --change-en and --change-zh for en-US and zh-CN release changes.");
+    }
+    (localizedChanges[locale] ??= []).push(change);
+  }
+  for (const [locale, changes] of Object.entries(localizedChanges)) {
+    if (changes.length !== options.changesEn.length) {
+      throw new Error(`--change-locale ${locale} must provide one translation for every release change.`);
+    }
+  }
+  options.localizedChanges = localizedChanges;
   return options;
 };
 
@@ -343,12 +367,6 @@ export const buildReleaseNotes = ({
   changesZh,
   issueNumber,
 }) => [
-  "## Key Changes",
-  "",
-  ...changesEn.map((change) => `- ${change}`),
-  "",
-  `Related Issue: #${issueNumber}`,
-  "",
   "## 🇨🇳 中文说明 / Chinese Changelog",
   "",
   "## 主要更新",
@@ -357,7 +375,22 @@ export const buildReleaseNotes = ({
   "",
   `关联 Issue：#${issueNumber}`,
   "",
+  "## Key Changes",
+  "",
+  ...changesEn.map((change) => `- ${change}`),
+  "",
+  `Related Issue: #${issueNumber}`,
+  "",
 ].join("\n");
+
+export const buildReleaseSummary = ({ version, changesEn, changesZh, localizedChanges = {} }) => ({
+  version,
+  changes: {
+    "en-US": [...changesEn],
+    "zh-CN": [...changesZh],
+    ...Object.fromEntries(Object.entries(localizedChanges).map(([locale, changes]) => [locale, [...changes]])),
+  },
+});
 
 export const reusedAssetMatches = (previousAssets, currentAssets, name) => {
   const previous = previousAssets.find((asset) => asset.name === name);
@@ -491,11 +524,17 @@ const assertReleasePreconditions = ({ repository, previousTag }) => {
   }
 };
 
-const updateReleaseVersions = ({ nextVersion, desktopRebuild, mobileRebuild }) => {
-  const changedPaths = ["package.json"];
+const updateReleaseVersions = ({ nextVersion, desktopRebuild, mobileRebuild, changesEn, changesZh, localizedChanges }) => {
+  const changedPaths = ["package.json", "release-summary.json"];
   const rootPackage = readJson("package.json");
   rootPackage.version = nextVersion;
   writeJson("package.json", rootPackage);
+  writeJson("release-summary.json", buildReleaseSummary({
+    version: nextVersion,
+    changesEn,
+    changesZh,
+    localizedChanges,
+  }));
 
   if (desktopRebuild) {
     const desktopPackage = readJson("apps/desktop/package.json");
@@ -519,18 +558,40 @@ const parseRunId = (output) => {
   return match ? Number(match[1]) : null;
 };
 
-const waitForRun = async ({ repository, runId, label }) => {
+export const waitForRun = async ({
+  repository,
+  runId,
+  label,
+  viewRun = () => ghJson([
+    "run",
+    "view",
+    String(runId),
+    "--repo",
+    repository,
+    "--json",
+    "status,conclusion,url,headSha",
+  ]),
+  waitForNextPoll = () => wait(POLL_INTERVAL_MS),
+  maxConsecutiveFailures = 5,
+}) => {
   let lastStatus = "";
+  let consecutiveFailures = 0;
   while (true) {
-    const runView = ghJson([
-      "run",
-      "view",
-      String(runId),
-      "--repo",
-      repository,
-      "--json",
-      "status,conclusion,url,headSha",
-    ]);
+    let runView;
+    try {
+      runView = viewRun();
+      consecutiveFailures = 0;
+    } catch (error) {
+      consecutiveFailures += 1;
+      if (consecutiveFailures >= maxConsecutiveFailures) {
+        throw error;
+      }
+      console.warn(
+        `[release] ${label}: GitHub status check failed; retrying (${consecutiveFailures}/${maxConsecutiveFailures - 1})`,
+      );
+      await waitForNextPoll();
+      continue;
+    }
     const statusLabel = `${runView.status}${runView.conclusion ? `/${runView.conclusion}` : ""}`;
     if (statusLabel !== lastStatus) {
       console.log(`[release] ${label}: ${statusLabel} (${runView.url})`);
@@ -542,7 +603,7 @@ const waitForRun = async ({ repository, runId, label }) => {
       }
       return runView;
     }
-    await wait(POLL_INTERVAL_MS);
+    await waitForNextPoll();
   }
 };
 
@@ -878,6 +939,7 @@ const releaseMain = async (options) => {
     console.log(buildReleaseNotes({
       changesEn: options.changesEn,
       changesZh: options.changesZh,
+      localizedChanges: options.localizedChanges,
       issueNumber: 0,
     }));
     return;
@@ -918,6 +980,8 @@ const releaseMain = async (options) => {
       nextVersion: releaseVersion,
       desktopRebuild: desktopPlan.rebuild,
       mobileRebuild: mobilePlan.rebuild,
+      changesEn: options.changesEn,
+      changesZh: options.changesZh,
     });
     run("git", ["add", ...versionPaths]);
     run("git", ["diff", "--cached", "--check"]);
@@ -947,7 +1011,7 @@ const releaseMain = async (options) => {
     console.log(`[release] Draft created: ${draftUrl}`);
   }
 
-  const [desktopRunId, mobileRunId] = await Promise.all([
+  const [desktopRunId, mobileRunId, dockerRunId] = await Promise.all([
     dispatchReleaseWorkflow({
       repository: options.repository,
       workflow: RELEASE_WORKFLOWS.desktop,
@@ -957,6 +1021,12 @@ const releaseMain = async (options) => {
     dispatchReleaseWorkflow({
       repository: options.repository,
       workflow: RELEASE_WORKFLOWS.mobile,
+      tag,
+      headSha: releaseSha,
+    }),
+    dispatchReleaseWorkflow({
+      repository: options.repository,
+      workflow: RELEASE_WORKFLOWS.docker,
       tag,
       headSha: releaseSha,
     }),
@@ -971,6 +1041,11 @@ const releaseMain = async (options) => {
       repository: options.repository,
       runId: mobileRunId,
       label: "Draft Android assets",
+    }),
+    waitForRun({
+      repository: options.repository,
+      runId: dockerRunId,
+      label: "Draft Docker image",
     }),
   ]);
 
@@ -1010,7 +1085,7 @@ const releaseMain = async (options) => {
   ], { capture: true });
   console.log(`[release] published: ${releaseUrl}`);
 
-  const [desktopAudit, mobileAudit] = await Promise.all([
+  const [desktopAudit, mobileAudit, dockerAudit] = await Promise.all([
     findReleaseRun({
       repository: options.repository,
       workflow: RELEASE_WORKFLOWS.desktop,
@@ -1021,6 +1096,13 @@ const releaseMain = async (options) => {
     findReleaseRun({
       repository: options.repository,
       workflow: RELEASE_WORKFLOWS.mobile,
+      tag,
+      headSha: releaseSha,
+      publishedAfter: publishedAt,
+    }),
+    findReleaseRun({
+      repository: options.repository,
+      workflow: RELEASE_WORKFLOWS.docker,
       tag,
       headSha: releaseSha,
       publishedAfter: publishedAt,
@@ -1052,6 +1134,11 @@ const releaseMain = async (options) => {
         runId: mobileAudit.databaseId,
         label: "Published Android asset audit",
       }),
+      waitForRun({
+        repository: options.repository,
+        runId: dockerAudit.databaseId,
+        label: "Published Docker image audit",
+      }),
     ]);
   } catch (error) {
     run("gh", [
@@ -1072,7 +1159,7 @@ const releaseMain = async (options) => {
     "--repo",
     options.repository,
     "--body",
-    `Released in [${tag}](${releaseUrl}).\n\nRequired local validations, Draft asset preparation, and post-publication native asset audits passed.`,
+    `Released in [${tag}](${releaseUrl}).\n\nRequired local validations, Draft asset and image preparation, and post-publication audits passed.`,
   ]);
   run("gh", [
     "issue",
