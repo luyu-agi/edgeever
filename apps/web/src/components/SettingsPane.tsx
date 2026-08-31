@@ -33,13 +33,10 @@ import { UserManagementCard } from "./settings/UserManagementCard";
 import { ObjectStorageCard } from "./settings/ObjectStorageCard";
 import { AiModelCard } from "./settings/AiModelCard";
 import { AiPromptsCard } from "./settings/AiPromptsCard";
-import { AiGenerationPreferenceCard } from "./settings/AiGenerationPreferenceCard";
 import { AiTagSuggestionPromptCard } from "./settings/AiTagSuggestionPromptCard";
 import { ThemeToggle } from "./ThemeToggle";
 import type { AuthUser } from "@edgeever/shared";
 import { contentEnterMotion } from "@/lib/motion";
-import type { EdgeEverPluginHost } from "@/lib/plugins/plugin-host";
-import { PluginToolbarMenu } from "./plugins/PluginToolbarMenu";
 import { useDeployedUpdateNotice } from "@/hooks/useDeployedUpdateNotice";
 
 interface SettingsPaneProps {
@@ -48,8 +45,6 @@ interface SettingsPaneProps {
   onOpenAiPrompts: () => void;
   imageCompressionEnabled: boolean;
   onImageCompressionChange: (enabled: boolean) => void;
-  syncIntervalMs: number | null;
-  onSyncIntervalChange: (intervalMs: number | null) => void;
   shortcutSettings: ShortcutSettings;
   onShortcutSettingsChange: (settings: ShortcutSettings) => void;
   editorContentAlignment: EditorContentAlignment;
@@ -61,8 +56,6 @@ interface SettingsPaneProps {
   isOwner: boolean;
   user: AuthUser | null;
   refreshWorkspaceAfterImport: () => Promise<void>;
-  pluginHost: EdgeEverPluginHost;
-  onOpenPluginMarketplace: () => void;
 }
 
 // Slate and brand color variables already switch values with the root theme.
@@ -91,8 +84,6 @@ export const SettingsPane = ({
   onOpenAiPrompts,
   imageCompressionEnabled,
   onImageCompressionChange,
-  syncIntervalMs,
-  onSyncIntervalChange,
   shortcutSettings,
   onShortcutSettingsChange,
   editorContentAlignment,
@@ -104,8 +95,6 @@ export const SettingsPane = ({
   isOwner,
   user,
   refreshWorkspaceAfterImport,
-  pluginHost,
-  onOpenPluginMarketplace,
 }: SettingsPaneProps) => {
   const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<TabKey>("general");
@@ -215,8 +204,6 @@ export const SettingsPane = ({
             <PreferenceCard
               imageCompressionEnabled={imageCompressionEnabled}
               onImageCompressionChange={onImageCompressionChange}
-              syncIntervalMs={syncIntervalMs}
-              onSyncIntervalChange={onSyncIntervalChange}
               shortcutSettings={shortcutSettings}
               onShortcutSettingsChange={onShortcutSettingsChange}
               editorContentAlignment={editorContentAlignment}
@@ -242,15 +229,14 @@ export const SettingsPane = ({
         return (
           <SettingsGroup>
             <AiModelCard />
-            <AiPromptsCard onOpenLibrary={onOpenAiPrompts} />
             <McpConfigCard />
+            <AiPromptsCard onOpenLibrary={onOpenAiPrompts} />
             <AdvancedPlayCard />
           </SettingsGroup>
         );
       case "advanced":
         return (
           <SettingsGroup>
-            <AiGenerationPreferenceCard />
             <AiTagSuggestionPromptCard />
             {isOwner ? <ObjectStorageCard demoMode={demoMode} /> : null}
             {canClearLocalData ? <DesktopLocalDataCard /> : null}
@@ -297,10 +283,6 @@ export const SettingsPane = ({
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <PluginToolbarMenu
-            host={pluginHost}
-            onManage={onOpenPluginMarketplace}
-          />
           <ThemeToggle className="inline-flex" showLabel />
         </div>
       </header>

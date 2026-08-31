@@ -35,11 +35,12 @@ EdgeEver 是一款现代化的开源笔记工作区。它为你找回经典印�
 
 ## 功能
 
-- **自由选择部署方式**：同一套应用既可免费运行于 Cloudflare Serverless，也可通过 Docker 部署到 VPS、NAS 或家庭服务器，无需维护产品代码分支。
+- **自由选择部署方式**：同一套应用既可免费运行于 Cloudflare Serverless，也可通过 Docker 部署到 VPS、NAS 或家庭服务器。按 Cloudflare 免费存储额度估算，个人部署可容纳约 15 万条短笔记和约 5 万张图片；Docker 存储可按需扩展，轻松承载百万级笔记与海量图片。
 - **数据开放，不设围墙**：基于标准 SQLite 存储，提供 REST API、MCP 与 CLI 接口。数据随时可读可导，不再担心被任何特定平台绑定。
 - **无损 ZIP 打包与无缝迁移**：一键打包导出包含 Markdown、Front Matter、嵌套目录及附件的完整档案，同时保留历史版本与结构化数据，方便在不同实例间完整还原。
 - **原生 AI Agent 智脑联动**：内置 MCP（Model Context Protocol）协议，支持 Claude Code、Codex、Antigravity 等 AI 助手直接读取与整理笔记，也可与 Notion Database、飞书多维表格轻松打通。
 - **接入自己的 AI 模型**：支持添加多个 OpenAI、Anthropic、Gemini 兼容服务与第三方中转平台，在编辑器中随时对全文或选区进行智能总结、要点提炼、语法校对、翻译与续写润色。
+- **插件扩展能力**：支持从插件市场安装客户端插件与主题，扩展笔记操作、编辑器命令和自定义面板等能力。
 - **多端无缝同步，无设备限制**：自托管数据无商业限制，摆脱免费账号仅限 2 台设备的束缚，在 PC、平板与手机上随心同步。
 - **经典三栏布局与专注模式**：笔记本树、笔记列表与编辑区一目了然；桌面端一键开启专注模式，让思绪尽情铺满屏幕。
 - **无限层级笔记本**：轻松构建清晰的多级目录结构。
@@ -55,7 +56,7 @@ EdgeEver 是一款现代化的开源笔记工作区。它为你找回经典印�
 - **高效多选与批量操作**：支持笔记批量合并、批量移动，以及笔记本拖拽排序与层级调整。
 - **离线草稿与同步队列**：网络不稳定时自动保存离线草稿，恢复连线后自动入队同步。
 - **多账号与个人空间隔离**：单实例支持创建多个独立账号，用户数据相互隔离，配备直观的管理员账号管理与安全加密机制。
-- **全平台多端覆盖**：支持 Web、[Android](https://play.google.com/store/apps/details?id=org.edgeever.mobile)、[macOS](https://github.com/tianma-if/edgeever/releases) 和 [iOS](https://apps.apple.com/us/app/edgeever/id6792625631)，Windows 版即将推出；网页裁剪插件支持 [Chrome](https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo)、[Edge](https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo) 和 [Firefox](https://addons.mozilla.org/zh-CN/firefox/addon/edgeever-web-clipper/)。
+- **全平台多端覆盖**：支持 Web、[Android](https://play.google.com/store/apps/details?id=org.edgeever.mobile)、[macOS](https://github.com/tianma-if/edgeever/releases)、[Windows x64 预览版](https://github.com/tianma-if/edgeever/releases/latest) 和 [iOS](https://apps.apple.com/us/app/edgeever/id6792625631)；网页裁剪插件支持 [Chrome](https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo)、[Edge](https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo) 和 [Firefox](https://addons.mozilla.org/zh-CN/firefox/addon/edgeever-web-clipper/)。
 
 ## 部署
 
@@ -88,7 +89,7 @@ Cloudflare 在线部署可以选择以下两种方式之一：
 2. **启用 Actions**：进入 Fork 的 **Actions** 标签页，点击 **I understand my workflows, go ahead and enable them**，确保名为 **Update deployed EdgeEver** 的 GitHub Actions 工作流能够自动运行，从而持续获得 **EdgeEver** 最新的产品特性和问题修复。
 3. **导入 Cloudflare**：登录 Cloudflare 控制台，进入 **Workers & Pages**，选择导入该 Fork 仓库。
 4. **创建资源与登录凭据**：创建 D1 `edgeever` 与 R2 `edgeever-resources`，并添加 Worker Secret `EDGE_EVER_AUTH_PASSWORD` 作为管理员登录密码。binding 由部署命令生成，不要修改 Fork 中的文件。
-5. **启动构建与验证**：使用默认构建配置启动首次构建，部署完成后访问 `/api/health` 确认返回 `200` 即可开始使用。
+5. **启动构建与验证**：导入仓库后直接启动首次构建。部署完成后访问 `/api/health`，确认返回 `200` 即可开始使用。
 
 > 📖 包含具体参数与构建命令的详细步骤，请查看 [在线部署完整文档](docs/deploy-cloudflare-button.zh-CN.md)。
 
@@ -96,21 +97,19 @@ Cloudflare 在线部署可以选择以下两种方式之一：
 
 ### 方案三：在 VPS 或 NAS 上使用 Docker
 
-如果 VPS 或 NAS 位于中国大陆境外，使用 GitHub 托管的安装脚本和 GHCR 镜像：
+使用 GitHub 托管的安装脚本和官方 GHCR 镜像：
 
 ```sh
 curl -fsSL https://edgeever.org/install.sh | bash
 ```
 
-如果 VPS 或 NAS 位于中国大陆境内，使用腾讯云 COS 安装脚本和腾讯云 TCR 镜像，
-下载速度和稳定性通常更好：
-
-```sh
-curl -fsSL https://edgeever-installer-1256854452.cos.ap-guangzhou.myqcloud.com/install.sh | bash -s -- --mirror tcr
-```
-
-两种方式都会自动拉取最新镜像、生成管理员密码、使用 Docker Compose 启动
+该命令会自动拉取最新镜像、生成管理员密码、使用 Docker Compose 启动
 EdgeEver，并设置每日自动更新。手动部署与配置说明见 [Docker 部署文档](docs/deploy-docker.zh-CN.md)。
+
+EdgeEver 官方容器镜像托管于 GitHub Container Registry（GHCR）。部分中国大陆
+网络环境可能出现连接缓慢或超时。如果无法正常拉取，请在部署前自行配置可用的
+网络代理或可信的镜像加速服务。第三方网络及镜像服务的可用性和安全性由
+用户自行评估。
 
 ---
 
@@ -130,15 +129,15 @@ EdgeEver，并设置每日自动更新。手动部署与配置说明见 [Docker 
   <a href="https://addons.mozilla.org/zh-CN/firefox/addon/edgeever-web-clipper/"><img src="https://raw.githubusercontent.com/alrra/browser-logos/58881b84c4d73adc03c06fa2c275a7abee02d935/src/firefox/firefox.svg" alt="为 Firefox 安装 EdgeEver 网页裁剪插件" width="36" height="36" /></a>
 </p>
 
-开发者也可参考[扩展开发说明](apps/extension/README.md)从源码构建并加载插件。
-
 ## 关于客户端
 
 原生客户端提供更流畅、稳定的使用体验，以及更完善的系统级集成，并支持本地存储与离线编辑。恢复联网后，内容会自动增量同步，适合高频使用和弱网场景。
 
 Android App 现已上架 [Google Play](https://play.google.com/store/apps/details?id=org.edgeever.mobile)，也可从 [GitHub Releases](https://github.com/tianma-if/edgeever/releases) 下载签名 APK。iOS App 现已上架 [App Store](https://apps.apple.com/us/app/edgeever/id6792625631)，可使用非大陆区的 Apple ID 下载。
 
-macOS App 可从 [GitHub Releases](https://github.com/tianma-if/edgeever/releases) 下载。Windows 版本正在处理代码签名证书问题，解决后即可发布。
+macOS App 与未签名的 [Windows x64 预览版](https://github.com/tianma-if/edgeever/releases/latest) 均可从 GitHub Releases 下载。Windows 预览版尚未使用 Authenticode 签名，系统或组织策略可能显示警告或阻止安装；请仅从 EdgeEver 官方 Release 下载。不要为安装 EdgeEver 降低 Windows 安全设置；如策略阻止安装，请继续使用 Web/PWA 客户端。
+
+安装后，Windows 预览版仍保留正常的自动更新体验：EdgeEver 发现新 Release 后，会在下载前验证独立 Ed25519 签名的更新清单，下载完成后再次验证安装包，再提示重启安装（选择稍后则在退出 EdgeEver 时自动安装）；清单缺失、签名错误或文件不一致都会停止更新。详见 [Windows 预览版安全与更新说明](docs/windows-preview.zh-CN.md)。
 
 暂无原生客户端的平台，可通过 Chrome 或 Edge 将 EdgeEver 安装为 PWA 使用。
 
@@ -219,19 +218,11 @@ https://你的域名/api/openapi.json
 
 仓库内文件：[docs/openapi.json](docs/openapi.json)。
 
-## 插件开发预览
-
-独立的插件市场页面支持从已验证索引、公开 GitHub 仓库或 Manifest 地址安装受信任的客户端插件和无代码主题包。插件可以查询与修改笔记、操作编辑器选区、注册命令和自定义面板、使用加密 Secret Storage，并向声明过的域名发起网络请求。桌面端右上角提供统一插件入口和最近使用记录；Cron 与后台任务暂不纳入。详见[插件开发文档](docs/plugin-development.zh-CN.md)。
-
 ## MCP
 
-先在 EdgeEver 左下角 **个人中心** 的 **MCP 设置** 中创建 API Token，再将 Token 或完整 MCP 配置发送给 AI Agent。连接后，Agent 即可在你的授权范围内安全地读取、整理和导入笔记。MCP 也开放了完整的笔记模板与 AI 指令管理能力：Agent 可以列出、查看、新建、更新和删除模板与指令，也可以使用模板创建笔记、恢复缺失的内置指令。读取模板和指令需要 `read:memos` 权限，变更需要 `write:memos` 权限；重复执行同一笔记导入任务不会创建重复笔记。
+在 **个人中心** -> **MCP 设置** 中创建 API Token 并交给 AI Agent，即可让 Agent 在账号授权范围内安全地读取、整理和导入笔记，管理笔记模板与 AI 指令，并与 Notion Database、飞书多维表格等工具联动。
 
-Remote MCP 端点支持无状态的 `2026-07-28` 协议，同时继续兼容现有客户端使用的 2025 握手式协议版本。
-
-> 放飞你的思路，这种情况下是有很多灵活玩法：
-比如让AI Agent归纳你随机记录的灵感创意、针对你的笔记做精准的人物画像、构建自己的知识图谱、自动为笔记打标签）
-借助 MCP，EdgeEver 还可以与 Notion Database、飞书多维表格等工具联动，把日常笔记中零散的灵感、信息和素材沉淀到结构化数据库中，方便后续整理、检索与管理。
+> 放飞你的想法：让 AI Agent 归纳随手记录的灵感、构建个人知识图谱、根据笔记生成用户画像，或自动为笔记打标签。
 
 ## 图片压缩规则
 
@@ -241,7 +232,7 @@ Cloudflare Worker 侧执行图片处理会消耗计算/图片处理额度，因�
 
 ## 高级对象存储
 
-实例 Owner 可在**设置 → 高级设置 → OSS 对象存储**中配置兼容 S3 API 的对象存储。切换存储不会迁移或影响已有附件。Cloudflare 部署还需配置至少 32 个字符的 `EDGE_EVER_STORAGE_ENCRYPTION_KEY` Worker Secret。
+实例 Owner 可在**设置 → 高级设置 → OSS 对象存储**中配置兼容 S3 API 的对象存储。切换存储不会迁移或影响已有附件。
 
 ## 导入与迁移 (Migration)
 
@@ -255,11 +246,22 @@ Cloudflare Worker 侧执行图片处理会消耗计算/图片处理额度，因�
 
 Docker 与 Cloudflare 共用同一套前端、API 路由、业务服务、鉴权、MCP 实现和 migration。容器使用 SQLite，并支持本地文件或 S3 兼容附件存储，提供 `amd64` 与 `arm64` 镜像。详见[使用 Docker 部署 EdgeEver](docs/deploy-docker.zh-CN.md)和[自托管与 Docker 架构](docs/self-hosting-architecture.zh-CN.md)。
 
+## 同步时序
+
+Web、PWA 与桌面端会在停止编辑 30 秒后上传笔记，并在页面可见时每 5 分钟检查云端变更；窗口聚焦与手动刷新仍会立即拉取。可在 [`apps/web/src/lib/workspace-refresh.ts`](apps/web/src/lib/workspace-refresh.ts) 中调整 `DEFERRED_MEMO_SYNC_DELAY_MS` 和 `BACKGROUND_WORKSPACE_REFRESH_INTERVAL_MS`。
+
 ## 致谢
 
 - “minimal品牌绿”主题排版架构借鉴于 [obsidian-minimal](https://github.com/kepano/obsidian-minimal)。
 - “Outline 品牌绿”主题排版架构借鉴于 [Outline](https://github.com/outline/outline)。
+- “经典蓝白”主题借鉴了早期 [StackEdit](https://github.com/benweet/stackedit)/[Bootstrap](https://github.com/twbs/bootstrap) 系 Markdown 排版风格，并参考[马克飞象](https://maxiang.io/)完善中文排版细节。
+
+## 商标与品牌使用
+
+EdgeEver 名称、Logo 及其他品牌标识用于识别官方项目。Fork 或修改版可以说明其“基于 EdgeEver”，但不得暗示官方身份或误导用户。开源许可不授予商标权利；其他使用须事先取得项目维护者的书面许可。
 
 ## 免责声明
 
 EdgeEver 是一款完全独立的开源笔记软件，由个人和社区自主开发维护。本项目与 Evernote®（印象笔记）及其关联公司不存在任何商业合作、授权、赞助或隶属关系。
+
+EdgeEver 是自托管软件。除官方演示实例外，项目维护者不托管、控制或审核用户内容。实例中存储或展示的内容由用户或实例运营者负责，不代表项目维护者的立场。

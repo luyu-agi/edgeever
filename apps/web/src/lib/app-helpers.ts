@@ -1,6 +1,7 @@
 import type { MemoSummary, Notebook, TiptapDoc } from "@edgeever/shared";
 import { DEFAULT_MEMO_TITLE } from "@edgeever/shared";
 import { getMobileNotebookSearchVisibleIds } from "@edgeever/shared/mobile-ui";
+import type { MemoFilterMode, MemoSortMode } from "@edgeever/client";
 import { buildNotebookTree, type NotebookNode, type NotebookNodeComparator } from "./utils";
 import * as React from "react";
 import type { ReactNode } from "react";
@@ -8,8 +9,7 @@ import type { TFunction } from "i18next";
 
 export type Pane = "notebooks" | "memos" | "editor";
 export type MemoView = "notebook" | "trash";
-export type MemoFilterMode = "all" | "tagged" | "untagged" | "pinned";
-export type MemoSortMode = "updated-desc" | "created-desc" | "title-asc";
+export type { MemoFilterMode, MemoSortMode } from "@edgeever/client";
 export type NotebookSortMode = "custom" | "name-asc" | "memo-count-desc" | "updated-desc";
 export type EditorContentAlignment = "start" | "center";
 export type MemoListDensity = "preview" | "compact";
@@ -17,10 +17,16 @@ export type ShortcutAction =
   | "createMemo"
   | "createNotebook"
   | "focusSearch"
+  | "focusGlobalSearch"
   | "focusReplace"
+  | "openQuickSwitcher"
+  | "openPreviousMemo"
+  | "openNextMemo"
   | "openAiAssistant"
   | "saveAndSync"
-  | "toggleEditorMode";
+  | "toggleReadingProtection"
+  | "toggleEditorMode"
+  | "toggleOutline";
 export type ShortcutBinding = {
   key: string;
   ctrlOrMeta: boolean;
@@ -56,6 +62,9 @@ export type AppNoticeDialogState = { title: string; description: string };
 export const isTextEntryTarget = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   Boolean(target.closest("input, textarea, select, [contenteditable='true'], [role='textbox'], .ProseMirror"));
+
+export const getSearchShortcutScope = (selectedMemoId: string | null): "note" | "memo-list" =>
+  selectedMemoId ? "note" : "memo-list";
 
 export const getNotebookAncestorIds = (nodes: NotebookNode[], targetNotebookId: string) => {
   const walk = (items: NotebookNode[], ancestors: string[]): string[] | null => {
@@ -120,9 +129,8 @@ export { buildNotebookTree, type NotebookNode };
 export { DEFAULT_MEMO_TITLE };
 
 export const IMAGE_COMPRESSION_STORAGE_KEY = "edgeever.imageCompressionEnabled";
-export const SYNC_INTERVAL_STORAGE_KEY = "edgeever.syncInterval";
-const LEGACY_AUTO_SAVE_INTERVAL_STORAGE_KEY = "edgeever.autoSaveInterval";
 export const DESKTOP_FOCUS_MODE_STORAGE_KEY = "edgeever.desktopFocusMode";
+export const DESKTOP_READING_PROTECTION_STORAGE_KEY = "edgeever.desktopReadingProtection";
 export const EDITOR_CONTENT_ALIGNMENT_STORAGE_KEY = "edgeever.editorContentAlignment";
 export const MEMO_LIST_DENSITY_STORAGE_KEY = "edgeever.memoListDensity";
 export const MEMO_LIST_WIDTH_STORAGE_KEY = "edgeever.memoListWidth";
@@ -132,18 +140,6 @@ export const DEFAULT_MEMO_LIST_WIDTH_PX = 360;
 export const MIN_MEMO_LIST_WIDTH_PX = 300;
 export const MAX_MEMO_LIST_WIDTH_PX = 540;
 export const EDITOR_LOCAL_SAVE_DELAY_MS = 1_200;
-
-export type SyncIntervalPreference = "30s" | "5m" | "15m" | "30m" | "1h" | "2h" | "off";
-export const DEFAULT_SYNC_INTERVAL_MS = 30_000;
-const SYNC_INTERVAL_VALUES: Record<SyncIntervalPreference, number | null> = {
-  "30s": 30_000,
-  "5m": 300_000,
-  "15m": 900_000,
-  "30m": 1_800_000,
-  "1h": 3_600_000,
-  "2h": 7_200_000,
-  off: null,
-};
 
 export const MEMO_DRAG_MIME = "application/x-edgeever-memos";
 export const NOTEBOOK_DRAG_MIME = "application/x-edgeever-notebook";
@@ -189,9 +185,29 @@ export const getShortcutActionOptions = (
     description: t("shortcuts.actions.focusSearch.description"),
   },
   {
+    value: "focusGlobalSearch",
+    label: t("shortcuts.actions.focusGlobalSearch.label"),
+    description: t("shortcuts.actions.focusGlobalSearch.description"),
+  },
+  {
     value: "focusReplace",
     label: t("shortcuts.actions.focusReplace.label"),
     description: t("shortcuts.actions.focusReplace.description"),
+  },
+  {
+    value: "openQuickSwitcher",
+    label: t("shortcuts.actions.openQuickSwitcher.label"),
+    description: t("shortcuts.actions.openQuickSwitcher.description"),
+  },
+  {
+    value: "openPreviousMemo",
+    label: t("shortcuts.actions.openPreviousMemo.label"),
+    description: t("shortcuts.actions.openPreviousMemo.description"),
+  },
+  {
+    value: "openNextMemo",
+    label: t("shortcuts.actions.openNextMemo.label"),
+    description: t("shortcuts.actions.openNextMemo.description"),
   },
   {
     value: "openAiAssistant",
@@ -204,9 +220,19 @@ export const getShortcutActionOptions = (
     description: t("shortcuts.actions.saveAndSync.description"),
   },
   {
+    value: "toggleReadingProtection",
+    label: t("shortcuts.actions.toggleReadingProtection.label"),
+    description: t("shortcuts.actions.toggleReadingProtection.description"),
+  },
+  {
     value: "toggleEditorMode",
     label: t("shortcuts.actions.toggleEditorMode.label"),
     description: t("shortcuts.actions.toggleEditorMode.description"),
+  },
+  {
+    value: "toggleOutline",
+    label: t("shortcuts.actions.toggleOutline.label"),
+    description: t("shortcuts.actions.toggleOutline.description"),
   },
 ];
 
@@ -214,10 +240,23 @@ export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = {
   createMemo: { key: "n", ctrlOrMeta: true, shift: false, alt: false },
   createNotebook: { key: "n", ctrlOrMeta: true, shift: true, alt: false },
   focusSearch: { key: "f", ctrlOrMeta: true, shift: false, alt: false },
+  focusGlobalSearch: { key: "f", ctrlOrMeta: true, shift: true, alt: false },
   focusReplace: { key: "h", ctrlOrMeta: true, shift: false, alt: false },
+  openQuickSwitcher: { key: "o", ctrlOrMeta: true, shift: false, alt: false },
+  openPreviousMemo: { key: "[", ctrlOrMeta: true, shift: false, alt: false },
+  openNextMemo: { key: "]", ctrlOrMeta: true, shift: false, alt: false },
   openAiAssistant: { key: "j", ctrlOrMeta: true, shift: false, alt: false },
   saveAndSync: { key: "s", ctrlOrMeta: true, shift: false, alt: false },
+  toggleReadingProtection: { key: "e", ctrlOrMeta: true, shift: false, alt: false },
   toggleEditorMode: { key: "/", ctrlOrMeta: true, shift: false, alt: false },
+  toggleOutline: { key: "1", ctrlOrMeta: true, shift: true, alt: false },
+};
+
+const LEGACY_READING_PROTECTION_SHORTCUT: ShortcutBinding = {
+  key: "l",
+  ctrlOrMeta: true,
+  shift: true,
+  alt: false,
 };
 
 const SHORTCUT_ALIASES: Partial<Record<ShortcutAction, ShortcutBinding[]>> = {
@@ -228,10 +267,16 @@ const SHORTCUT_ACTION_VALUES: ShortcutAction[] = [
   "createMemo",
   "createNotebook",
   "focusSearch",
+  "focusGlobalSearch",
   "focusReplace",
+  "openQuickSwitcher",
+  "openPreviousMemo",
+  "openNextMemo",
   "openAiAssistant",
   "saveAndSync",
+  "toggleReadingProtection",
   "toggleEditorMode",
+  "toggleOutline",
 ];
 
 export const isDefaultMemoTitle = (title: string | null | undefined) => title?.trim() === DEFAULT_MEMO_TITLE;
@@ -278,29 +323,6 @@ export const writeImageCompressionPreference = (enabled: boolean) => {
   }
 };
 
-export const readSyncIntervalPreference = (): number | null => {
-  try {
-    const stored = (
-      window.localStorage.getItem(SYNC_INTERVAL_STORAGE_KEY)
-      ?? window.localStorage.getItem(LEGACY_AUTO_SAVE_INTERVAL_STORAGE_KEY)
-    );
-    const preference = stored === "1m" ? "30s" : stored;
-    return preference && preference in SYNC_INTERVAL_VALUES
-      ? SYNC_INTERVAL_VALUES[preference as SyncIntervalPreference]
-      : DEFAULT_SYNC_INTERVAL_MS;
-  } catch {
-    return DEFAULT_SYNC_INTERVAL_MS;
-  }
-};
-
-export const writeSyncIntervalPreference = (preference: SyncIntervalPreference) => {
-  try {
-    window.localStorage.setItem(SYNC_INTERVAL_STORAGE_KEY, preference);
-  } catch {
-    // Local storage can be unavailable in private or restricted browser contexts.
-  }
-};
-
 export const readDesktopFocusModePreference = () => {
   try {
     return window.localStorage.getItem(DESKTOP_FOCUS_MODE_STORAGE_KEY) === "true";
@@ -312,6 +334,22 @@ export const readDesktopFocusModePreference = () => {
 export const writeDesktopFocusModePreference = (enabled: boolean) => {
   try {
     window.localStorage.setItem(DESKTOP_FOCUS_MODE_STORAGE_KEY, enabled ? "true" : "false");
+  } catch {
+    // Local storage can be unavailable in private or restricted browser contexts.
+  }
+};
+
+export const readDesktopReadingProtectionPreference = () => {
+  try {
+    return window.localStorage.getItem(DESKTOP_READING_PROTECTION_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+};
+
+export const writeDesktopReadingProtectionPreference = (enabled: boolean) => {
+  try {
+    window.localStorage.setItem(DESKTOP_READING_PROTECTION_STORAGE_KEY, enabled ? "true" : "false");
   } catch {
     // Local storage can be unavailable in private or restricted browser contexts.
   }
@@ -415,15 +453,18 @@ export const readShortcutSettingsPreference = (): ShortcutSettings => {
     }
 
     const parsedValue = JSON.parse(rawValue) as Partial<ShortcutSettings>;
-    return SHORTCUT_ACTION_VALUES.reduce<ShortcutSettings>(
-      (settings, action) => ({
-        ...settings,
-        [action]: isShortcutBinding(parsedValue[action])
-          ? { ...parsedValue[action], key: normalizeShortcutKey(parsedValue[action].key) }
-          : DEFAULT_SHORTCUT_SETTINGS[action],
-      }),
-      { ...DEFAULT_SHORTCUT_SETTINGS }
-    );
+    return SHORTCUT_ACTION_VALUES.reduce<ShortcutSettings>((settings, action) => {
+      const storedBinding = parsedValue[action];
+      const normalizedBinding = isShortcutBinding(storedBinding)
+        ? { ...storedBinding, key: normalizeShortcutKey(storedBinding.key) }
+        : DEFAULT_SHORTCUT_SETTINGS[action];
+      const binding = action === "toggleReadingProtection"
+        && shortcutBindingsEqual(normalizedBinding, LEGACY_READING_PROTECTION_SHORTCUT)
+          ? DEFAULT_SHORTCUT_SETTINGS.toggleReadingProtection
+          : normalizedBinding;
+
+      return { ...settings, [action]: binding };
+    }, { ...DEFAULT_SHORTCUT_SETTINGS });
   } catch {
     return DEFAULT_SHORTCUT_SETTINGS;
   }
@@ -450,7 +491,8 @@ export const formatShortcutBinding = (binding: ShortcutBinding) => {
 };
 
 export const shortcutBindingFromKeyboardEvent = (event: KeyboardEvent): ShortcutBinding | null => {
-  const key = normalizeShortcutKey(event.key);
+  const digitKey = typeof event.code === "string" ? /^Digit([0-9])$/.exec(event.code)?.[1] : undefined;
+  const key = digitKey ?? normalizeShortcutKey(event.key);
 
   if (["control", "meta", "shift", "alt", "escape"].includes(key)) {
     return null;

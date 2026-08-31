@@ -1,7 +1,7 @@
-import { AlignHorizontalJustifyCenter, ChartNoAxesCombined, Image, Keyboard, Languages, MousePointerClick, Palette, RefreshCw, Sparkles } from "lucide-react";
+import { AlignHorizontalJustifyCenter, ChartNoAxesCombined, FileCode2, Image, Keyboard, Languages, MousePointerClick, Palette, Sparkles } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { writeSyncIntervalPreference, type EditorContentAlignment, type ShortcutSettings, type SyncIntervalPreference } from "@/lib/app-helpers";
+import type { EditorContentAlignment, ShortcutSettings } from "@/lib/app-helpers";
 import {
   EDITOR_LINK_OPEN_MODE_CHANGED_EVENT,
   getStoredEditorLinkOpenMode,
@@ -32,8 +32,10 @@ import {
 import { ShortcutSettingsItem } from "./ShortcutSettingsItem";
 import { CustomEditorThemeDialog } from "./CustomEditorThemeDialog";
 import {
-  MERMAID_THEME_NAMES,
+  MARKDOWN_THEME_PREFERENCES,
+  MERMAID_THEME_PREFERENCES,
   useEditorTheme,
+  useMarkdownTheme,
   useMermaidTheme,
   DEFAULT_CUSTOM_LIGHT_COLORS,
   DEFAULT_CUSTOM_DARK_COLORS,
@@ -43,8 +45,6 @@ import {
 interface PreferenceCardProps {
   imageCompressionEnabled: boolean;
   onImageCompressionChange: (enabled: boolean) => void;
-  syncIntervalMs: number | null;
-  onSyncIntervalChange: (intervalMs: number | null) => void;
   shortcutSettings: ShortcutSettings;
   onShortcutSettingsChange: (settings: ShortcutSettings) => void;
   editorContentAlignment: EditorContentAlignment;
@@ -54,8 +54,6 @@ interface PreferenceCardProps {
 export const PreferenceCard = ({
   imageCompressionEnabled,
   onImageCompressionChange,
-  syncIntervalMs,
-  onSyncIntervalChange,
   shortcutSettings,
   onShortcutSettingsChange,
   editorContentAlignment,
@@ -68,7 +66,8 @@ export const PreferenceCard = ({
     setCustomEditorThemes,
     setEditorTheme,
   } = useEditorTheme();
-  const { mermaidTheme, setMermaidTheme } = useMermaidTheme();
+  const { mermaidThemePreference, setMermaidTheme } = useMermaidTheme();
+  const { markdownThemePreference, setMarkdownTheme } = useMarkdownTheme();
   const [customThemeDialogOpen, setCustomThemeDialogOpen] = useState(false);
   const [editingTheme, setEditingTheme] = useState<CustomEditorTheme | null>(null);
   const [activeLocalePreference, setActiveLocalePreference] = useState<AppLocalePreference>(() => getAppLocalePreference());
@@ -140,7 +139,7 @@ export const PreferenceCard = ({
   }, []);
 
   const activeCustom = customEditorThemes.find((t) => t.id === editorTheme);
-  const isPreset = editorTheme === "default" || editorTheme === "minimal-emerald" || editorTheme === "outline-emerald" || editorTheme === "wechat-green" || editorTheme === "modern-mint";
+  const isPreset = editorTheme === "default" || editorTheme === "minimal-emerald" || editorTheme === "outline-emerald" || editorTheme === "wechat-green" || editorTheme === "modern-mint" || editorTheme === "marxico";
 
   const handleEditClick = () => {
     if (activeCustom) {
@@ -181,9 +180,6 @@ export const PreferenceCard = ({
     setActiveLocalePreference(preference);
     void changeAppLocalePreference(preference);
   };
-
-  const syncIntervalPreference: SyncIntervalPreference =
-    syncIntervalMs === 300_000 ? "5m" : syncIntervalMs === 900_000 ? "15m" : syncIntervalMs === 1_800_000 ? "30m" : syncIntervalMs === 3_600_000 ? "1h" : syncIntervalMs === 7_200_000 ? "2h" : "30s";
 
   return (
     <Card className="w-full min-w-0 overflow-hidden shadow-none">
@@ -281,6 +277,7 @@ export const PreferenceCard = ({
                 <SelectItem value="outline-emerald">{t("settings.editorThemes.outline-emerald")}</SelectItem>
                 <SelectItem value="wechat-green">{t("settings.editorThemes.wechat-green")}</SelectItem>
                 <SelectItem value="modern-mint">{t("settings.editorThemes.modern-mint")}</SelectItem>
+                <SelectItem value="marxico">{t("settings.editorThemes.marxico")}</SelectItem>
                 {!isMobile && (
                   <>
                     {customEditorThemes.length > 0 && <div className="my-1 border-t border-slate-100" />}
@@ -307,21 +304,21 @@ export const PreferenceCard = ({
 
         <div className="flex min-h-16 flex-col items-start gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="flex min-w-0 items-start gap-3">
-            <ChartNoAxesCombined className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
+            <FileCode2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-slate-900">{t("settings.mermaidThemeTitle")}</div>
-              <div className="mt-0.5 text-xs leading-4 text-slate-500">{t("settings.mermaidThemeDescription")}</div>
+              <div className="text-sm font-semibold text-slate-900">{t("settings.markdownThemeTitle")}</div>
+              <div className="mt-0.5 text-xs leading-4 text-slate-500">{t("settings.markdownThemeDescription")}</div>
             </div>
           </div>
           <div className="w-full shrink-0 sm:w-80">
-            <Select value={mermaidTheme} onValueChange={(value) => setMermaidTheme(value as typeof mermaidTheme)}>
-              <SelectTrigger aria-label={t("settings.mermaidThemeTitle")} className="h-9 bg-white">
+            <Select value={markdownThemePreference} onValueChange={(value) => setMarkdownTheme(value as typeof markdownThemePreference)}>
+              <SelectTrigger aria-label={t("settings.markdownThemeTitle")} className="h-9 bg-white">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {MERMAID_THEME_NAMES.map((theme) => (
+                {MARKDOWN_THEME_PREFERENCES.map((theme) => (
                   <SelectItem key={theme} value={theme}>
-                    {t(`settings.mermaidThemes.${theme}`)}
+                    {t(`settings.markdownThemes.${theme}`)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -331,33 +328,23 @@ export const PreferenceCard = ({
 
         <div className="flex min-h-16 flex-col items-start gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="flex min-w-0 items-start gap-3">
-            <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
+            <ChartNoAxesCombined className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-slate-900">{t("settings.syncIntervalTitle")}</div>
-              <div className="mt-0.5 text-xs leading-4 text-slate-500">{t("settings.syncIntervalDescription")}</div>
+              <div className="text-sm font-semibold text-slate-900">{t("settings.mermaidThemeTitle")}</div>
+              <div className="mt-0.5 text-xs leading-4 text-slate-500">{t("settings.mermaidThemeDescription")}</div>
             </div>
           </div>
-          <div className="w-full shrink-0 sm:w-44">
-            <Select
-              value={syncIntervalPreference}
-              onValueChange={(value) => {
-                const preference = value as SyncIntervalPreference;
-                writeSyncIntervalPreference(preference);
-                onSyncIntervalChange(
-                  preference === "5m" ? 300_000 : preference === "15m" ? 900_000 : preference === "30m" ? 1_800_000 : preference === "1h" ? 3_600_000 : preference === "2h" ? 7_200_000 : 30_000
-                );
-              }}
-            >
-              <SelectTrigger aria-label={t("settings.syncIntervalTitle")} className="h-9 bg-white">
+          <div className="w-full shrink-0 sm:w-80">
+            <Select value={mermaidThemePreference} onValueChange={(value) => setMermaidTheme(value as typeof mermaidThemePreference)}>
+              <SelectTrigger aria-label={t("settings.mermaidThemeTitle")} className="h-9 bg-white">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="30s">{t("settings.syncIntervals.30s")}</SelectItem>
-                <SelectItem value="5m">{t("settings.syncIntervals.5m")}</SelectItem>
-                <SelectItem value="15m">{t("settings.syncIntervals.15m")}</SelectItem>
-                <SelectItem value="30m">{t("settings.syncIntervals.30m")}</SelectItem>
-                <SelectItem value="1h">{t("settings.syncIntervals.1h")}</SelectItem>
-                <SelectItem value="2h">{t("settings.syncIntervals.2h")}</SelectItem>
+                {MERMAID_THEME_PREFERENCES.map((theme) => (
+                  <SelectItem key={theme} value={theme}>
+                    {t(`settings.mermaidThemes.${theme}`)}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
