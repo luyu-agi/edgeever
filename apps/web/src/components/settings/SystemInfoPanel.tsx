@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { DeploymentMetadata } from "@edgeever/shared/deployment-metadata";
 import { Activity, CircleCheck, Cloud, Copy, ExternalLink, LoaderCircle, MonitorSmartphone, RefreshCw, RotateCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { useDeployedUpdateNotice } from "@/hooks/useDeployedUpdateNotice";
 import { detectWebClientKind } from "@/lib/client-environment";
 import { api, getConfiguredDesktopApiBaseUrl, type InstanceHealth } from "@/lib/api";
+import { resolveSystemInfoDeploymentMetadata } from "@/lib/deployment-metadata";
 import { resolveDeploymentPlatform } from "@/lib/instance-runtime";
 import {
   getClientRuntimeDiagnostics,
@@ -25,7 +27,7 @@ export type SystemInfoItem = {
   status?: "connected" | "connecting" | "failed" | "warning" | "error" | "default";
 };
 
-type InstanceSystemDiagnostics = Pick<InstanceHealth, "build" | "containerImageSource" | "migration" | "objectStorageProvider" | "storage"> & {
+type InstanceSystemDiagnostics = Pick<InstanceHealth, "build" | "containerImageSource" | "deployment" | "migration" | "objectStorageProvider" | "storage"> & {
   runtime?: string | null;
 };
 
@@ -56,9 +58,12 @@ const detectOperatingSystem = (userAgent: string, platform: string) => {
   return null;
 };
 
-const getDeploymentDescription = (t: (key: string) => string) => {
-  const trigger = t(`systemInfo.deploymentTriggers.${__EDGEEVER_DEPLOYMENT_TRIGGER__}`);
-  const method = t(`systemInfo.deploymentMethods.${__EDGEEVER_DEPLOYMENT_METHOD__}`);
+const getDeploymentDescription = (
+  t: (key: string) => string,
+  deployment: DeploymentMetadata,
+) => {
+  const trigger = t(`systemInfo.deploymentTriggers.${deployment.trigger}`);
+  const method = t(`systemInfo.deploymentMethods.${deployment.method}`);
   return `${trigger} · ${method}`;
 };
 
@@ -92,6 +97,14 @@ const getWebSystemInfoGroups = (
       window.matchMedia("(display-mode: fullscreen)").matches,
     navigatorStandalone: (navigator as NavigatorWithStandalone).standalone === true,
   });
+  const deployment = resolveSystemInfoDeploymentMetadata(
+    diagnostics.instance?.deployment,
+    {
+      trigger: __EDGEEVER_DEPLOYMENT_TRIGGER__,
+      method: __EDGEEVER_DEPLOYMENT_METHOD__,
+    },
+    clientKind !== "desktopApp",
+  );
 
   return [
     {
@@ -140,7 +153,7 @@ const getWebSystemInfoGroups = (
               value: t(`systemInfo.containerImageSources.${getContainerImageSourceTranslationKey(diagnostics.instance.containerImageSource)}`),
             }]
           : []),
-        { label: t("systemInfo.deployment"), value: getDeploymentDescription(t), colSpan: "full" },
+        { label: t("systemInfo.deployment"), value: getDeploymentDescription(t, deployment), colSpan: "full" },
       ],
     },
     {
@@ -327,6 +340,7 @@ export const SystemInfoPanel = ({ active = true }: { active?: boolean }) => {
   };
 
   const desktopUpdateState = desktopUpdateStatusQuery.data?.state ?? "idle";
+  const desktopAutoUpdateSupported = clientRuntimeQuery.data?.autoUpdateSupported !== false;
   const desktopUpdateBusy = desktopUpdateCheckMutation.isPending || desktopUpdateInstallMutation.isPending;
   const desktopUpdateStatus = desktopUpdateInstallMutation.isError || desktopUpdateCheckMutation.isError || desktopUpdateStatusQuery.isError
     ? t("systemInfo.desktopUpdateFailed")
@@ -382,7 +396,7 @@ export const SystemInfoPanel = ({ active = true }: { active?: boolean }) => {
                   <h3 id={headingId} className="text-xs font-semibold text-slate-800">{group.title}</h3>
                 </div>
               </div>
-              {isClient && desktopAvailable ? (
+              {isClient && desktopAvailable && desktopAutoUpdateSupported ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -404,6 +418,18 @@ export const SystemInfoPanel = ({ active = true }: { active?: boolean }) => {
                         ? t("systemInfo.desktopUpdateChecking")
                         : t("systemInfo.desktopCheckForUpdates")}
                 </Button>
+              ) : isClient && desktopAvailable ? (
+                <Button
+                  asChild
+                  size="sm"
+                  variant="outline"
+                  className="h-7 bg-white px-2.5 text-xs shadow-xs hover:bg-slate-50"
+                >
+                  <a href="https://github.com/tianma-if/edgeever/releases/latest" target="_blank" rel="noreferrer">
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    {t("systemInfo.desktopDownloadLatest")}
+                  </a>
+                </Button>
               ) : null}
             </div>
             {isCloud && active && release ? (
@@ -417,7 +443,7 @@ export const SystemInfoPanel = ({ active = true }: { active?: boolean }) => {
                 </a>
               </div>
             ) : null}
-            {isClient && desktopAvailable && desktopUpdateStatus ? (
+            {isClient && desktopAvailable && desktopAutoUpdateSupported && desktopUpdateStatus ? (
               <p
                 className={cn(
                   "text-right text-xs",

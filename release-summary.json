@@ -1,13 +1,21 @@
 {
-  "version": "1.50.0",
+  "version": "1.62.0",
   "changes": {
     "en-US": [
-      "System information now identifies whether a self-hosted Docker deployment is running the official EdgeEver image or a custom image, making support diagnostics clearer.",
-      "Windows Preview now launches the packaged interface reliably, avoids a missing Visual C++ runtime dependency, and shows actionable diagnostics instead of a silent white screen when startup fails."
+      "Diagrams now offer smoother canvas navigation, clearer multi-selection feedback, refined mind-map and flowchart styling, ten color schemes, and new organization, timeline, and fishbone layouts.",
+      "Extensions now use clearer trusted-code and network permissions, host-rendered settings, settings-change notifications, automatic updates for official plugins, and a new official AI RSS plugin.",
+      "Android and iOS users can filter notes by tag from the native workspace.",
+      "Linux x64 is now available as an AppImage Preview download.",
+      "Desktop attachment downloads preserve their original filenames.",
+      "Docker self-hosting starts more reliably across supported Linux environments and now packages all runtime dependencies correctly."
     ],
     "zh-CN": [
-      "系统信息现在会标识 Docker 自托管部署使用的是 EdgeEver 官方镜像还是自定义镜像，便于排查部署问题。",
-      "Windows 预览版现在可以可靠启动打包界面，不再依赖缺失的 Visual C++ 运行库；启动失败时会显示可操作的诊断信息，而不是无提示白屏。"
+      "图表现已支持更顺畅的画布导航、更清晰的多选反馈、优化的思维导图与流程图样式、十种配色方案，以及组织架构图、时间线和鱼骨图布局。",
+      "扩展现采用更清晰的受信任代码与网络权限、宿主渲染设置和设置变更通知；官方插件可自动更新，并新增官方 AI RSS 插件。",
+      "Android 与 iOS 用户现在可以在原生工作区中按标签筛选笔记。",
+      "现已提供 Linux x64 AppImage Preview 下载。",
+      "桌面端下载附件时会保留原始文件名。",
+      "Docker 自托管在受支持的 Linux 环境中启动更可靠，并会正确打包全部运行时依赖。"
     ]
   }
 }

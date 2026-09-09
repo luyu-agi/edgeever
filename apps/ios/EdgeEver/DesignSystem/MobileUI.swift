@@ -69,6 +69,20 @@ enum MobileUI {
         }
         return next
     }
+
+    static func toggleTagSelection(current: [String], tag: String, maxSelections: Int) -> [String] {
+        guard maxSelections > 0 else { return [] }
+        if let index = current.firstIndex(of: tag) {
+            var next = current
+            next.remove(at: index)
+            return next
+        }
+        if maxSelections == 1 {
+            return [tag]
+        }
+        guard current.count < maxSelections else { return current }
+        return current + [tag]
+    }
 }
 
 struct NotebookTreeItem: Identifiable, Equatable {
@@ -224,5 +238,38 @@ enum MemoPreviewDate {
         f.locale = locale
         f.setLocalizedDateFormatFromTemplate("yMd")
         return f.string(from: date)
+    }
+}
+
+enum MemoListTimestampField {
+    case createdAt
+    case updatedAt
+
+    static func resolve(for sort: MemoSortMode) -> Self {
+        sort == .createdDesc ? .createdAt : .updatedAt
+    }
+
+    func value(from memo: MemoSummary) -> String {
+        switch self {
+        case .createdAt: memo.createdAt
+        case .updatedAt: memo.updatedAt
+        }
+    }
+}
+
+enum MemoDetailDate {
+    static func format(
+        _ iso: String,
+        locale: Locale = .current,
+        timeZone: TimeZone = .current
+    ) -> String {
+        let parsers = [ISO8601DateFormatter.edgeEver, ISO8601DateFormatter.edgeEverFallback]
+        guard let date = parsers.compactMap({ $0.date(from: iso) }).first else { return "" }
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = timeZone
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 }

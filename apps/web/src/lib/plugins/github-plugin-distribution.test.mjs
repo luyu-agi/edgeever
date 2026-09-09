@@ -6,7 +6,8 @@ const manifest = {
   id: "org.edgeever.github-test",
   name: "GitHub Test",
   version: "1.2.3",
-  apiVersion: "1",
+  apiVersion: "2",
+  settingsUi: "host",
   entry: "./main.js",
   permissions: ["ui:notices"],
 };
@@ -41,9 +42,13 @@ describe("GitHub plugin distribution", () => {
       }
       return new Response(null, { status: 500 });
     };
-    const downloadAsset = async (_coordinates, asset) => new TextEncoder().encode(
-      asset.id === 1 ? JSON.stringify(manifest) : "export default { activate() {} };",
-    ).buffer;
+    const assetDownloads = [];
+    const downloadAsset = async (_coordinates, releaseTag, asset) => {
+      assetDownloads.push([releaseTag, asset.name]);
+      return new TextEncoder().encode(
+        asset.id === 1 ? JSON.stringify(manifest) : "export default { activate() {} };",
+      ).buffer;
+    };
 
     const downloaded = await downloadGithubExtension("https://github.com/example/edgeever-plugin", request, downloadAsset);
 
@@ -51,6 +56,10 @@ describe("GitHub plugin distribution", () => {
     expect(downloaded.pluginPackage?.pluginId).toBe("org.edgeever.github-test");
     expect(downloaded.pluginPackage?.mainJs).toContain("activate");
     expect(downloaded.checksums.mainJs).toHaveLength(64);
+    expect(assetDownloads).toEqual([
+      ["v1.2.3", "manifest.json"],
+      ["v1.2.3", "main.js"],
+    ]);
     expect(calls).toContain("https://api.github.com/repos/example/edgeever-plugin/contents/manifest.json");
     expect(calls).toContain("https://api.github.com/repos/example/edgeever-plugin/releases/tags/1.2.3");
     expect(calls).not.toContain("https://api.github.com/assets/1");
@@ -85,7 +94,7 @@ describe("GitHub plugin distribution", () => {
       return new Response(null, { status: 404 });
     };
     const releaseManifest = { ...manifest, permissions: [...manifest.permissions, "network"], networkHosts: ["api.example.com"] };
-    const downloadAsset = async (_coordinates, asset) => new TextEncoder().encode(
+    const downloadAsset = async (_coordinates, _releaseTag, asset) => new TextEncoder().encode(
       asset.id === 1 ? JSON.stringify(releaseManifest) : "export default { activate() {} };",
     ).buffer;
 

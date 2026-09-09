@@ -11,18 +11,22 @@ COPY apps/site/package.json apps/site/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/client/package.json packages/client/package.json
 COPY packages/plugin-api/package.json packages/plugin-api/package.json
+COPY packages/public-network/package.json packages/public-network/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/wrangler/package.json packages/wrangler/package.json
 COPY patches patches
 
 FROM manifests AS dependencies
-RUN bun install --frozen-lockfile \
+RUN bun install --frozen-lockfile --linker hoisted \
   --filter edgeever \
   --filter @edgeever/api \
+  --filter @edgeever/public-network \
   --filter @edgeever/web
 
 FROM manifests AS production-dependencies
-RUN bun install --frozen-lockfile --production --filter edgeever
+RUN bun install --frozen-lockfile --production --linker hoisted \
+  --filter edgeever \
+  --filter @edgeever/public-network
 
 FROM dependencies AS build
 COPY apps/api apps/api

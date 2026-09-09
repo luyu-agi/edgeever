@@ -6,6 +6,7 @@ const mobileWorkflow = readFileSync(new URL("../.github/workflows/mobile-build.y
 const desktopPackageVerifier = readFileSync(new URL("./verify-desktop-package.mjs", import.meta.url), "utf8");
 const packagedStartupVerifier = readFileSync(new URL("./verify-packaged-desktop-startup.mjs", import.meta.url), "utf8");
 const cargoConfig = readFileSync(new URL("../.cargo/config.toml", import.meta.url), "utf8");
+const desktopBuilderConfig = readFileSync(new URL("../apps/desktop/electron-builder.yml", import.meta.url), "utf8");
 
 function step(name) {
   const start = workflow.indexOf(`      - name: ${name}\n`);
@@ -92,8 +93,30 @@ describe("desktop release workflow", () => {
     expect(desktopPackageVerifier).toContain("isVisualCppRuntimeDll");
     expect(cargoConfig).toContain('target.x86_64-pc-windows-msvc');
     expect(cargoConfig).toContain('target-feature=+crt-static');
+    expect(desktopBuilderConfig).toContain([
+      "nsis:",
+      "  oneClick: true",
+      "  perMachine: false",
+    ].join("\n"));
+    expect(desktopBuilderConfig).not.toContain("allowToChangeInstallationDirectory");
     expect(desktopPackageVerifier).toContain(
       'path.replaceAll("\\\\", "/")',
     );
+  });
+
+  test("builds and audits a Linux x64 AppImage Preview in parallel", () => {
+    expect(workflow).toContain("name: Linux x64 AppImage Preview");
+    expect(workflow).toContain("runs-on: ubuntu-22.04");
+    expect(workflow).toContain("EDGE_EVER_DESKTOP_TARGET: linux");
+    expect(desktopBuilderConfig).toContain(
+      "artifactName: EdgeEver-${version}-linux-x64.${ext}",
+    );
+    expect(workflow).toContain("name: Run packaged Linux sidecar integration tests");
+    expect(workflow).toContain("name: Verify packaged Linux first launch");
+    expect(workflow).toContain("xvfb-run -a bun run verify:packaged-desktop-startup");
+    expect(workflow).toContain("SHA256SUMS-linux.txt");
+    expect(workflow).toContain("name: Audit Linux Preview asset");
+    expect(workflow).toContain("needs: [release-plan, desktop, windows, linux]");
+    expect(desktopPackageVerifier).toContain("verifyGlibcBaseline(sidecar)");
   });
 });

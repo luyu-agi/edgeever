@@ -61,13 +61,22 @@ describe("Docker release contract", () => {
       "COPY packages/wrangler/package.json packages/wrangler/package.json",
     );
     expect(dockerfile).toContain(
+      "COPY packages/public-network/package.json packages/public-network/package.json",
+    );
+    expect(dockerfile).toContain(
       "COPY release-summary.json release-summary.json",
     );
     expect(dockerfile).toContain(
       "COPY --from=build /app/release-summary.json ./release-summary.json",
     );
     expect(dockerfile).toContain("--filter @edgeever/web");
-    expect(dockerfile).toContain("--production --filter edgeever");
+    expect(dockerfile).toContain("--filter @edgeever/public-network");
+    expect(dockerfile).toContain(
+      "RUN bun install --frozen-lockfile --linker hoisted \\\n  --filter edgeever \\\n  --filter @edgeever/api",
+    );
+    expect(dockerfile).toContain(
+      "--production --linker hoisted \\\n  --filter edgeever \\\n  --filter @edgeever/public-network",
+    );
     expect(dockerfile).toContain("USER bun");
     expect(dockerfile).toContain('VOLUME ["/data"]');
     expect(dockerfile).toContain("HEALTHCHECK");
@@ -96,6 +105,12 @@ describe("Docker release contract", () => {
     );
     expect(selfHosted).toContain(
       "fetchEdgeEverApp(request, env, executionContext)",
+    );
+    expect(selfHosted).toContain(
+      'await import("../apps/api/src/s3-compatible-storage-adapter.ts")',
+    );
+    expect(selfHosted).not.toContain(
+      'import { createS3CompatibleStorageAdapter } from',
     );
     expect(selfHosted).not.toContain("worker.fetch(");
   });

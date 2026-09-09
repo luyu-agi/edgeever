@@ -1,18 +1,24 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, session, net, protocol, shell, dialog, safeStorage, clipboard, powerMonitor } from "electron";
-import { existsSync } from "node:fs";
-import { appendFile, mkdir, readdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { createReadStream, existsSync } from "node:fs";
+import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { Readable } from "node:stream";
 import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { release as operatingSystemRelease } from "node:os";
 import { SidecarRpcClient } from "./rpc.mjs";
 import { resourceRequestHeaders } from "./resource-request.mjs";
-import { cachedResourceResponse, isSafeResourceId, resourceIdFromRequest } from "./resource-url.mjs";
+import { downloadContentDispositionFromRequest, isSafeResourceId, parseByteRangeHeader, resourceIdFromRequest } from "./resource-url.mjs";
 import { isSupportedAssociatedFile } from "./file-association.mjs";
 import { accountDataDirectory, accountScopeKey } from "./account-scope.mjs";
 import { rotateDiagnosticLog } from "./diagnostic-log.mjs";
 import { restrictDirectory, restrictFile } from "./file-permissions.mjs";
-import { normalizeStagedResourceInput, remapStagedResourceMetadata } from "./staged-resource.mjs";
+import {
+  STAGED_RESOURCE_PART_BYTES,
+  normalizeStagedResourceMetadataInput,
+  normalizeStagedResourcePart,
+  remapStagedResourceMetadata,
+} from "./staged-resource.mjs";
 import {
   isMountedDiskImageVolume,
   isMountedInstallerPath,
@@ -27,11 +33,14 @@ import { LocalDataResetError, scheduleMacLocalDataReset } from "./local-data-res
 import { buildDesktopDiagnosticIssueUrl, normalizeDesktopDiagnostic } from "./desktop-diagnostics.mjs";
 import { createRendererStartupGuard } from "./renderer-startup-guard.mjs";
 import { waitForChildProcessSpawn } from "./child-process-start.mjs";
+import { ScheduledTaskScheduler } from "./scheduled-task-scheduler.mjs";
+import { desktopMenuCopy } from "./desktop-menu.mjs";
 import {
   fetchTrustedWindowsUpdate,
   verifyDownloadedWindowsUpdate,
 } from "./windows-update-trust.mjs";
 import electronUpdater from "electron-updater";
+import { createPluginPublicNetworkRuntime } from "./plugin-public-network.mjs";
 
 const { autoUpdater } = electronUpdater;
 
@@ -101,8 +110,25 @@ let rendererCrashDialogOpen = false;
 let rendererStartupFailureDialogOpen = false;
 let rendererStartupGuard = null;
 let rendererUnresponsiveTimer = null;
+const pluginPublicNetwork = createPluginPublicNetworkRuntime();
 let rendererUnresponsiveDialogOpen = false;
 let recoveredAfterAbnormalExit = false;
+const pendingScheduledTaskRuns = [];
+const sendScheduledTaskRun = (task, scheduledFor) => {
+  const payload = { task, scheduledFor: scheduledFor.toISOString() };
+  if (!mainWindow || mainWindow.isDestroyed() || !rendererReady) {
+    pendingScheduledTaskRuns.push(payload);
+    return;
+  }
+  mainWindow.webContents.send("desktop:scheduled-task", payload);
+};
+const scheduledTaskScheduler = new ScheduledTaskScheduler({
+  onRun: async (task, scheduledFor) => sendScheduledTaskRun(task, scheduledFor),
+  onError: (error, task) => void writeDiagnostic("scheduled-task.scheduler-error", {
+    taskId: task?.id,
+    message: error instanceof Error ? error.message : String(error),
+  }),
+});
 const updateCheckIntervalMs = 60 * 60 * 1_000;
 const updateCheckFocusThrottleMs = 15 * 60 * 1_000;
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -159,6 +185,7 @@ const writeDiagnostic = async (event, details = {}) => {
 
 const desktopRuntimeSystemInfo = () => ({
   appVersion: app.getVersion(),
+  autoUpdateSupported: process.platform !== "linux",
   platform: process.platform,
   architecture: process.arch,
   osVersion: process.getSystemVersion?.() || "unknown",
@@ -469,6 +496,13 @@ const flushPendingDesktopCommands = () => {
   }
 };
 
+const flushPendingScheduledTaskRuns = () => {
+  if (!rendererReady || !mainWindow || mainWindow.isDestroyed()) return;
+  while (pendingScheduledTaskRuns.length > 0) {
+    mainWindow.webContents.send("desktop:scheduled-task", pendingScheduledTaskRuns.shift());
+  }
+};
+
 const handleOpenTarget = (commandLine) => {
   const target = commandLine.find((value) => value.startsWith("edgeever://"));
   if (target) {
@@ -485,42 +519,44 @@ const handleOpenTarget = (commandLine) => {
 };
 
 const buildApplicationMenu = () => {
+  const copy = desktopMenuCopy(app.getLocale());
   const template = [
-    ...(process.platform === "darwin" ? [{ label: app.name, submenu: [{ role: "about" }, { type: "separator" }, { role: "hide" }, { role: "quit" }] }] : []),
+    ...(process.platform === "darwin" ? [{ label: app.name, submenu: [{ label: copy.about, role: "about" }, { type: "separator" }, { label: copy.hide, role: "hide" }, { label: copy.quit, role: "quit" }] }] : []),
     {
-      label: "File",
+      label: copy.file,
       submenu: [
-        { label: "New Note", accelerator: "CmdOrCtrl+N", click: () => sendDesktopCommand("new-memo") },
-        { label: "New Notebook", accelerator: "CmdOrCtrl+Shift+N", click: () => sendDesktopCommand("new-notebook") },
+        { label: copy.newMemo, accelerator: "CmdOrCtrl+N", click: () => sendDesktopCommand("new-memo") },
+        { label: copy.newNotebook, accelerator: "CmdOrCtrl+Shift+N", click: () => sendDesktopCommand("new-notebook") },
         { type: "separator" },
-        { role: "close" },
+        { label: copy.close, role: "close" },
       ],
     },
     {
-      label: "Edit",
+      label: copy.edit,
       submenu: [
-        { role: "undo" }, { role: "redo" }, { type: "separator" },
-        { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" },
+        { label: copy.undo, role: "undo" }, { label: copy.redo, role: "redo" }, { type: "separator" },
+        { label: copy.cut, role: "cut" }, { label: copy.copy, role: "copy" }, { label: copy.paste, role: "paste" }, { label: copy.selectAll, role: "selectAll" },
       ],
     },
     {
-      label: "View",
+      label: copy.view,
       submenu: [
-        { label: "Focus Search", accelerator: "CmdOrCtrl+Shift+F", click: () => sendDesktopCommand("focus-search") },
-        { label: "Toggle Focus Mode", click: () => sendDesktopCommand("toggle-focus-mode") },
+        { label: copy.focusSearch, accelerator: "CmdOrCtrl+Shift+F", click: () => sendDesktopCommand("focus-search") },
+        { label: copy.toggleFocusMode, click: () => sendDesktopCommand("toggle-focus-mode") },
         { type: "separator" },
-        { role: "togglefullscreen" }, { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" },
+        { label: copy.toggleFullScreen, role: "togglefullscreen" }, { label: copy.resetZoom, role: "resetZoom" }, { label: copy.zoomIn, role: "zoomIn" }, { label: copy.zoomOut, role: "zoomOut" },
       ],
     },
     {
-      label: "Window",
-      submenu: [{ role: "minimize" }, { role: "zoom" }, ...(process.platform === "darwin" ? [{ role: "front" }] : [])],
+      label: copy.window,
+      submenu: [{ label: copy.minimize, role: "minimize" }, { label: copy.zoom, role: "zoom" }, ...(process.platform === "darwin" ? [{ label: copy.front, role: "front" }] : [])],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 };
 
 const createTray = () => {
+  const copy = desktopMenuCopy(app.getLocale());
   const iconPath = trayIconPath({
     isPackaged: app.isPackaged,
     platform: process.platform,
@@ -532,12 +568,12 @@ const createTray = () => {
   tray = new Tray(icon);
   tray.setToolTip("EdgeEver");
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "Show EdgeEver", click: () => showWindow(mainWindow) },
-    { label: "Sync now", click: () => sendDesktopCommand("sync-now") },
-    { label: "Backup now", click: () => sendDesktopCommand("backup-now") },
-    ...(updateState === "downloaded" ? [{ label: "Restart to update", click: () => installDownloadedUpdate() }] : []),
+    { label: copy.show, click: () => showWindow(mainWindow) },
+    { label: copy.syncNow, click: () => sendDesktopCommand("sync-now") },
+    { label: copy.backupNow, click: () => sendDesktopCommand("backup-now") },
+    ...(updateState === "downloaded" ? [{ label: copy.restartToUpdate, click: () => installDownloadedUpdate() }] : []),
     { type: "separator" },
-    { label: "Quit EdgeEver", click: () => { isQuitting = true; app.quit(); } },
+    { label: copy.quit, click: () => { isQuitting = true; app.quit(); } },
   ]));
   tray.on("double-click", () => showWindow(mainWindow));
 };
@@ -545,16 +581,44 @@ const createTray = () => {
 const handleResourceProtocolRequest = async (request) => {
   const resourceId = resourceIdFromRequest(request.url);
   if (!resourceId) return new Response("Invalid resource", { status: 400 });
+  const downloadDisposition = downloadContentDispositionFromRequest(request.url);
 
   const directory = resourceCacheDirectory();
   const bytesPath = join(directory, `${resourceId}.bin`);
   const metadataPath = join(directory, `${resourceId}.json`);
 
+  const fileResponse = async (path, contentType, rangeHeader) => {
+    const { size } = await stat(path);
+    const range = parseByteRangeHeader(rangeHeader, size);
+    const headers = new Headers({
+      "Accept-Ranges": "bytes",
+      "Cache-Control": "no-store",
+      "Content-Type": contentType || "application/octet-stream",
+    });
+    if (downloadDisposition) headers.set("Content-Disposition", downloadDisposition);
+    if (range.kind === "invalid") {
+      headers.set("Content-Range", `bytes */${size}`);
+      return new Response(null, { status: 416, headers });
+    }
+    const selected = range.kind === "range" ? range : { offset: 0, length: size };
+    headers.set("Content-Length", String(selected.length));
+    if (range.kind === "range") {
+      headers.set("Content-Range", `bytes ${selected.offset}-${selected.offset + selected.length - 1}/${size}`);
+    }
+    const stream = createReadStream(path, {
+      start: selected.offset,
+      end: selected.offset + selected.length - 1,
+    });
+    return new Response(Readable.toWeb(stream), {
+      status: range.kind === "range" ? 206 : 200,
+      headers,
+    });
+  };
+
   try {
-    const bytes = await readFile(bytesPath);
     let metadata = {};
     try { metadata = JSON.parse(await readFile(metadataPath, "utf8")); } catch {}
-    return cachedResourceResponse(bytes, metadata.contentType, request.headers.get("range"));
+    return await fileResponse(bytesPath, metadata.contentType, request.headers.get("range"));
   } catch {
     // Fall through to the instance while online, then persist the response.
   }
@@ -568,7 +632,6 @@ const handleResourceProtocolRequest = async (request) => {
     if (rangeHeader) headers.set("range", rangeHeader);
     const response = await net.fetch(sourceUrl, { headers });
     if (!response.ok) return new Response("Resource request failed", { status: response.status });
-    const body = Buffer.from(await response.arrayBuffer());
     if (response.status === 206) {
       const responseHeaders = new Headers({
         "Accept-Ranges": response.headers.get("accept-ranges") || "bytes",
@@ -579,15 +642,53 @@ const handleResourceProtocolRequest = async (request) => {
         const value = response.headers.get(name);
         if (value) responseHeaders.set(name, value);
       }
-      return new Response(body, { status: 206, headers: responseHeaders });
+      if (downloadDisposition) responseHeaders.set("Content-Disposition", downloadDisposition);
+      return new Response(response.body, { status: 206, headers: responseHeaders });
     }
+    if (!response.body) return new Response("Resource response body is empty", { status: 502 });
     await mkdir(directory, { recursive: true });
     await restrictDirectory(directory);
-    await writeFile(bytesPath, body, { mode: 0o600 });
-    await writeFile(metadataPath, JSON.stringify({ contentType: response.headers.get("content-type") || "application/octet-stream" }), { mode: 0o600 });
-    await restrictFile(bytesPath);
-    await restrictFile(metadataPath);
-    return cachedResourceResponse(body, response.headers.get("content-type"), null);
+    const temporaryPath = `${bytesPath}.download-${crypto.randomUUID()}`;
+    const output = await open(temporaryPath, "w", 0o600);
+    const reader = response.body.getReader();
+    let finished = false;
+    const cleanup = async () => {
+      if (!finished) {
+        finished = true;
+        await output.close().catch(() => {});
+        await rm(temporaryPath, { force: true }).catch(() => {});
+      }
+    };
+    const streamedBody = new ReadableStream({
+      async pull(controller) {
+        try {
+          const next = await reader.read();
+          if (next.done) {
+            await output.close();
+            await rename(temporaryPath, bytesPath);
+            await writeFile(metadataPath, JSON.stringify({ contentType: response.headers.get("content-type") || "application/octet-stream" }), { mode: 0o600 });
+            await restrictFile(bytesPath);
+            await restrictFile(metadataPath);
+            finished = true;
+            controller.close();
+            return;
+          }
+          await output.write(next.value);
+          controller.enqueue(next.value);
+        } catch (error) {
+          await cleanup();
+          controller.error(error);
+        }
+      },
+      async cancel(reason) {
+        await reader.cancel(reason).catch(() => {});
+        await cleanup();
+      },
+    });
+    const responseHeaders = new Headers(response.headers);
+    responseHeaders.set("Cache-Control", "no-store");
+    if (downloadDisposition) responseHeaders.set("Content-Disposition", downloadDisposition);
+    return new Response(streamedBody, { status: 200, headers: responseHeaders });
   } catch (error) {
     void writeDiagnostic("resource.cache-failed", { resourceId, message: error.message });
     return new Response("Resource unavailable", { status: 504 });
@@ -604,12 +705,18 @@ const registerResourceProtocol = () => {
     const directory = stagedResourceDirectory();
     try {
       const metadata = JSON.parse(await readFile(join(directory, `${stagedId}.json`), "utf8"));
-      const bytes = await readFile(join(directory, `${stagedId}.bin`));
-      return new Response(bytes, {
-        headers: {
-          "Content-Type": metadata.type || "application/octet-stream",
-          "Cache-Control": "no-store",
-        },
+      const path = join(directory, `${stagedId}.bin`);
+      const { size } = await stat(path);
+      const stream = createReadStream(path);
+      const headers = new Headers({
+        "Content-Type": metadata.type || "application/octet-stream",
+        "Content-Length": String(size),
+        "Cache-Control": "no-store",
+      });
+      const downloadDisposition = downloadContentDispositionFromRequest(request.url);
+      if (downloadDisposition) headers.set("Content-Disposition", downloadDisposition);
+      return new Response(Readable.toWeb(stream), {
+        headers,
       });
     } catch (error) {
       void writeDiagnostic("resource.staged-read-failed", { stagedId, message: error.message });
@@ -642,7 +749,8 @@ const installDownloadedUpdate = () => {
   // The normal window close handler hides the app. Mark this as a real quit
   // before electron-updater closes windows so installation can proceed.
   isQuitting = true;
-  autoUpdater.quitAndInstall(false, true);
+  // Keep Windows updates silent and reuse the registered installation directory.
+  autoUpdater.quitAndInstall(process.platform === "win32", true);
   return { started: true };
 };
 
@@ -697,7 +805,7 @@ const promptForDownloadedUpdate = async (version) => {
 };
 
 const checkForDesktopUpdate = (reason, { force = false, throwOnError = false } = {}) => {
-  if (!app.isPackaged || process.env.EDGE_EVER_DISABLE_AUTO_UPDATE === "1" || updateState === "downloaded") {
+  if (process.platform === "linux" || !app.isPackaged || process.env.EDGE_EVER_DISABLE_AUTO_UPDATE === "1" || updateState === "downloaded") {
     return Promise.resolve(null);
   }
   if (updateCheckInFlight) {
@@ -743,7 +851,9 @@ const checkForDesktopUpdate = (reason, { force = false, throwOnError = false } =
 };
 
 const configureAutoUpdater = () => {
-  if (!app.isPackaged || process.env.EDGE_EVER_DISABLE_AUTO_UPDATE === "1") return;
+  // Linux Preview updates stay manual until a real AppImage-to-AppImage
+  // transition has passed the same cross-version gate as established clients.
+  if (process.platform === "linux" || !app.isPackaged || process.env.EDGE_EVER_DISABLE_AUTO_UPDATE === "1") return;
   autoUpdater.autoDownload = process.platform !== "win32";
   autoUpdater.autoInstallOnAppQuit = process.platform !== "win32";
   autoUpdater.autoRunAppAfterInstall = true;
@@ -821,6 +931,7 @@ const configureAutoUpdater = () => {
   }, updateCheckIntervalMs);
   powerMonitor.on("resume", () => {
     void checkForDesktopUpdate("resume", { force: true });
+    void scheduledTaskScheduler.runMissedOccurrences();
   });
 };
 
@@ -1115,6 +1226,7 @@ const startApplication = async () => {
   ipcMain.handle("desktop:set-account-scope", async (_event, accountId) => {
     const normalizedAccountId = typeof accountId === "string" && accountId.trim() ? accountId.trim() : null;
     const nextScopeKey = accountScopeKey(configuredApiBaseUrl, normalizedAccountId);
+    scheduledTaskScheduler.clear();
     if (sidecar && sidecarScopeKey === nextScopeKey) {
       await sidecar.waitUntilReady();
       return { ready: true, scope: nextScopeKey };
@@ -1130,6 +1242,7 @@ const startApplication = async () => {
     rendererReady = true;
     flushPendingDesktopCommands();
     flushPendingMarkdownImport();
+    flushPendingScheduledTaskRuns();
   });
   ipcMain.on("desktop:renderer-bootstrap-ready", (event) => {
     if (event.sender !== mainWindow?.webContents) return;
@@ -1149,8 +1262,22 @@ const startApplication = async () => {
     return { stored: Boolean(desktopSessionToken) };
   });
   ipcMain.handle("desktop:clear-session-token", async () => {
+    scheduledTaskScheduler.clear();
     await saveDesktopSessionToken("");
     return { stored: false };
+  });
+  ipcMain.handle("desktop:public-network-fetch", async (event, requestId, input) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error("Public network requests must come from the main window");
+    return pluginPublicNetwork.fetch(requestId, input);
+  });
+  ipcMain.on("desktop:cancel-public-network-fetch", (event, requestId) => {
+    if (event.sender === mainWindow?.webContents && typeof requestId === "string") pluginPublicNetwork.cancel(requestId);
+  });
+  ipcMain.handle("desktop:sync-scheduled-tasks", async (event, tasks) => {
+    if (event.sender !== mainWindow?.webContents) throw new Error("Scheduled tasks must come from the main window");
+    if (!Array.isArray(tasks) || tasks.length > 1_000) throw new Error("Invalid scheduled task list");
+    await scheduledTaskScheduler.reconcile(tasks);
+    return { scheduled: scheduledTaskScheduler.entries.size };
   });
   ipcMain.handle("desktop:record-renderer-error", async (event, details) => {
     if (event.sender !== mainWindow?.webContents) throw new Error("Renderer diagnostics must come from the main window");
@@ -1234,6 +1361,7 @@ const startApplication = async () => {
       if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("Desktop API URL must use HTTP(S)");
     }
     if (normalized === configuredApiBaseUrl) return configuredApiBaseUrl;
+    scheduledTaskScheduler.clear();
     configuredApiBaseUrl = normalized;
     await writeFile(instanceUrlPath(), configuredApiBaseUrl);
     if (sidecar) {
@@ -1251,20 +1379,59 @@ const startApplication = async () => {
   });
   ipcMain.handle("desktop:download-update", () => downloadTrustedDesktopUpdate("manual-download"));
   ipcMain.handle("desktop:install-update", () => installDownloadedUpdate());
-  ipcMain.handle("desktop:stage-resource", async (_event, input) => {
-    const { memoId, name, type, bytes } = normalizeStagedResourceInput(input);
+  ipcMain.handle("desktop:stage-resource-begin", async (_event, input) => {
+    const { memoId, name, type, size } = normalizeStagedResourceMetadataInput(input);
     const id = `stage_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const directory = stagedResourceDirectory();
     await mkdir(directory, { recursive: true });
     await restrictDirectory(directory);
-    const metadata = { id, memoId, name, type, size: bytes.byteLength };
+    const metadata = { id, memoId, name, type, size };
+    const pendingMetadataPath = join(directory, `${id}.pending.json`);
+    const pendingBytesPath = join(directory, `${id}.pending.bin`);
+    await writeFile(pendingMetadataPath, JSON.stringify(metadata), { mode: 0o600 });
+    await writeFile(pendingBytesPath, new Uint8Array(), { mode: 0o600 });
+    await restrictFile(pendingMetadataPath);
+    await restrictFile(pendingBytesPath);
+    return { id, partSize: STAGED_RESOURCE_PART_BYTES };
+  });
+  ipcMain.handle("desktop:stage-resource-append", async (_event, id, value) => {
+    if (!isSafeResourceId(id)) throw new Error("Invalid staged resource id");
+    const bytes = normalizeStagedResourcePart(value);
+    const directory = stagedResourceDirectory();
+    const pendingMetadataPath = join(directory, `${id}.pending.json`);
+    const pendingBytesPath = join(directory, `${id}.pending.bin`);
+    const metadata = JSON.parse(await readFile(pendingMetadataPath, "utf8"));
+    const current = await stat(pendingBytesPath);
+    if (current.size + bytes.byteLength > metadata.size) {
+      throw new Error("Staged resource received more bytes than declared");
+    }
+    await appendFile(pendingBytesPath, bytes);
+    return { receivedBytes: current.size + bytes.byteLength };
+  });
+  ipcMain.handle("desktop:stage-resource-complete", async (_event, id) => {
+    if (!isSafeResourceId(id)) throw new Error("Invalid staged resource id");
+    const directory = stagedResourceDirectory();
+    const pendingMetadataPath = join(directory, `${id}.pending.json`);
+    const pendingBytesPath = join(directory, `${id}.pending.bin`);
+    const metadata = JSON.parse(await readFile(pendingMetadataPath, "utf8"));
+    const current = await stat(pendingBytesPath);
+    if (current.size !== metadata.size) throw new Error("Staged resource is incomplete");
     const metadataPath = join(directory, `${id}.json`);
     const bytesPath = join(directory, `${id}.bin`);
+    await rename(pendingBytesPath, bytesPath);
     await writeFile(metadataPath, JSON.stringify(metadata), { mode: 0o600 });
-    await writeFile(bytesPath, Buffer.from(bytes), { mode: 0o600 });
     await restrictFile(metadataPath);
     await restrictFile(bytesPath);
+    await unlink(pendingMetadataPath).catch(() => {});
     return { id };
+  });
+  ipcMain.handle("desktop:stage-resource-abort", async (_event, id) => {
+    if (!isSafeResourceId(id)) throw new Error("Invalid staged resource id");
+    const directory = stagedResourceDirectory();
+    await Promise.all([
+      unlink(join(directory, `${id}.pending.json`)).catch(() => {}),
+      unlink(join(directory, `${id}.pending.bin`)).catch(() => {}),
+    ]);
   });
   ipcMain.handle("desktop:list-staged-resources", async () => {
     const directory = stagedResourceDirectory();
@@ -1302,6 +1469,25 @@ const startApplication = async () => {
     const bytes = await readFile(join(directory, `${id}.bin`));
     return { ...metadata, bytes: new Uint8Array(bytes) };
   });
+  ipcMain.handle("desktop:read-staged-resource-part", async (_event, id, start, length) => {
+    if (!isSafeResourceId(id)) throw new Error("Invalid staged resource id");
+    if (!Number.isSafeInteger(start) || start < 0) throw new Error("Invalid staged resource offset");
+    if (!Number.isSafeInteger(length) || length <= 0 || length > STAGED_RESOURCE_PART_BYTES) {
+      throw new Error("Invalid staged resource part length");
+    }
+    const path = join(stagedResourceDirectory(), `${id}.bin`);
+    const details = await stat(path);
+    if (start >= details.size || start + length > details.size) throw new Error("Invalid staged resource range");
+    const handle = await open(path, "r");
+    try {
+      const bytes = Buffer.allocUnsafe(length);
+      const { bytesRead } = await handle.read(bytes, 0, length, start);
+      if (bytesRead !== length) throw new Error("Staged resource part is incomplete");
+      return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytesRead);
+    } finally {
+      await handle.close();
+    }
+  });
   ipcMain.handle("desktop:read-resource", async (_event, id) => {
     if (!isSafeResourceId(id)) throw new Error("Invalid resource id");
     const response = await handleResourceProtocolRequest(new Request(
@@ -1319,6 +1505,8 @@ const startApplication = async () => {
     await Promise.all([
       unlink(join(directory, `${id}.json`)).catch(() => {}),
       unlink(join(directory, `${id}.bin`)).catch(() => {}),
+      unlink(join(directory, `${id}.pending.json`)).catch(() => {}),
+      unlink(join(directory, `${id}.pending.bin`)).catch(() => {}),
     ]);
   });
 
@@ -1362,6 +1550,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   shutdownCleanupStarted = true;
   isQuitting = true;
+  scheduledTaskScheduler.clear();
   rendererStartupGuard?.complete();
   clearRendererUnresponsiveTimer();
   if (sidecarRestartTimer) {
