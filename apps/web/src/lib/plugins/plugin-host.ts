@@ -17,8 +17,10 @@ import {
   type PluginNoteSummary,
   type PluginPanel,
   type PluginOpenNoteOptions,
+  type PluginPanelChrome,
   type PluginPanelCloseDecision,
   type PluginPanelOpenOptions,
+  normalizePluginPanelChrome,
   type PluginPermission,
   type PluginApiErrorCode,
   type PluginResource,
@@ -36,8 +38,18 @@ import { markdownToDoc } from "@edgeever/shared";
 import type { EdgeEverRepository } from "@/lib/repository";
 import { WebPluginSecretStore, type PluginSecretStorage } from "@/lib/plugins/plugin-secret-store";
 import { WebPluginPackageStore, type CachedPluginPackage, type PluginPackageStorage } from "@/lib/plugins/plugin-package-store";
-import { downloadGithubExtension, extensionManifestsEqual, parseGithubRepositoryUrl, sha256Hex } from "@/lib/plugins/github-plugin-distribution";
+import { downloadGithubExtension, downloadPinnedGithubExtension, extensionManifestsEqual, parseGithubRepositoryUrl, sha256Hex } from "@/lib/plugins/github-plugin-distribution";
+import {
+  catalogInstallSource,
+  planCatalogReconcile,
+  toLocalCatalogExtension,
+  toWorkspaceExtensionUpsert,
+  type PluginCatalogAdapter,
+} from "@/lib/plugins/plugin-catalog-sync";
+import { loadResolvedPluginMarketplace } from "@/lib/plugins/plugin-marketplace";
+import { hasAcknowledgedPluginTrustWarning } from "@/lib/plugins/plugin-trust";
 import { subscribeRepositoryMutations, type RepositoryMutationEvent } from "@/lib/repository-events";
+import type { WorkspaceExtension } from "@edgeever/shared";
 
 const INSTALLED_EXTENSIONS_STORAGE_KEY = "edgeever.extensions.installed.v1";
 const ACTIVE_THEME_STORAGE_KEY = "edgeever.extensions.active-theme.v1";
@@ -107,6 +119,7 @@ export interface InstalledExtension {
   manifest: ExtensionManifest;
   enabled: boolean;
   installedAt: string;
+  catalogUpdatedAt: string;
   error: string | null;
   source: ExtensionInstallSource;
 }
@@ -116,18 +129,22 @@ export interface ExtensionInstallSource {
   repositoryUrl?: string;
   releaseTag?: string;
   verified: boolean;
+  publisher?: "edgeever";
 }
 
 export interface RegisteredPluginCommand {
   pluginId: string;
   id: string;
   title: string;
+  listed?: boolean;
+  menu?: boolean;
 }
 
 export interface RegisteredPluginPanel {
   pluginId: string;
   id: string;
   title: string;
+  purpose?: "workflow" | "dashboard" | "preview" | "onboarding";
   presentation: "dialog" | "fullscreen";
 }
 
@@ -154,6 +171,10 @@ export interface PluginEditorAdapter {
 
 export interface PluginNavigationAdapter {
   openNote(noteId: string, notebookId: string, options?: PluginOpenNoteOptions): void | Promise<void>;
+}
+
+export interface PluginPanelChromeAdapter {
+  set(chrome: PluginPanelChrome): void;
 }
 
 export interface PluginPanelAdapter {
@@ -186,6 +207,7 @@ interface PluginHostOptions {
   secretStorage?: PluginSecretStorage;
   packageStorage?: PluginPackageStorage;
   scheduleAdapter?: PluginScheduleAdapter;
+  catalogAdapter?: PluginCatalogAdapter;
 }
 
 interface ActivePlugin {
@@ -304,6 +326,7 @@ const normalizeInstallSource = (value: unknown): ExtensionInstallSource => {
     verified: candidate.kind === "marketplace" && candidate.verified === true,
     ...(typeof candidate.repositoryUrl === "string" ? { repositoryUrl: candidate.repositoryUrl } : {}),
     ...(typeof candidate.releaseTag === "string" ? { releaseTag: candidate.releaseTag } : {}),
+    ...(candidate.publisher === "edgeever" ? { publisher: "edgeever" } : {}),
   };
 };
 
@@ -316,11 +339,13 @@ const readInstalledExtensions = (): InstalledExtension[] => {
         if (!item || typeof item !== "object") return [];
         const candidate = item as Partial<InstalledExtension>;
         if (typeof candidate.manifestUrl !== "string") return [];
+        const installedAt = typeof candidate.installedAt === "string" ? candidate.installedAt : new Date().toISOString();
         return [{
           manifestUrl: candidate.manifestUrl,
           manifest: parseExtensionManifest(candidate.manifest),
           enabled: Boolean(candidate.enabled),
-          installedAt: typeof candidate.installedAt === "string" ? candidate.installedAt : new Date().toISOString(),
+          installedAt,
+          catalogUpdatedAt: typeof candidate.catalogUpdatedAt === "string" ? candidate.catalogUpdatedAt : installedAt,
           error: typeof candidate.error === "string" ? candidate.error : null,
           source: normalizeInstallSource(candidate.source),
         }];
@@ -413,6 +438,8 @@ export class EdgeEverPluginHost {
   private readonly secretStorage: PluginSecretStorage;
   private readonly packageStorage: PluginPackageStorage;
   private readonly scheduleAdapter?: PluginScheduleAdapter;
+  private readonly catalogAdapter?: PluginCatalogAdapter;
+  private catalogSyncSuspended = 0;
   private readonly listeners = new Set<() => void>();
   private readonly activePlugins = new Map<string, ActivePlugin>();
   private readonly commands = new Map<string, PluginCommand & { pluginId: string }>();
@@ -433,9 +460,9 @@ export class EdgeEverPluginHost {
   private lifecycleQueue: Promise<void> = Promise.resolve();
   private readonly activatingPlugins = new Map<string, Promise<void>>();
 
-  private enqueueLifecycle(action: () => Promise<void>) {
+  private enqueueLifecycle<T>(action: () => Promise<T>): Promise<T> {
     const pending = this.lifecycleQueue.then(action, action);
-    this.lifecycleQueue = pending.catch(() => undefined);
+    this.lifecycleQueue = pending.then(() => undefined, () => undefined);
     return pending;
   }
 
@@ -449,6 +476,7 @@ export class EdgeEverPluginHost {
     this.secretStorage = options.secretStorage ?? new WebPluginSecretStore();
     this.packageStorage = options.packageStorage ?? new WebPluginPackageStore();
     this.scheduleAdapter = options.scheduleAdapter;
+    this.catalogAdapter = options.catalogAdapter;
     this.refreshSnapshot();
   }
 
@@ -483,12 +511,100 @@ export class EdgeEverPluginHost {
   activateEnabled() {
     return this.enqueueLifecycle(async () => {
     this.start();
+    const pendingTrustPluginIds = await this.syncFromCatalogOnce();
     for (const extension of this.extensions) {
       if (!extension.enabled || extension.manifest.type !== "plugin") continue;
       await this.activatePlugin(extension.manifest.id).catch(() => undefined);
     }
     this.applyActiveTheme();
+    return pendingTrustPluginIds;
     });
+  }
+
+  syncFromCatalog() {
+    return this.enqueueLifecycle(async () => this.syncFromCatalogOnce());
+  }
+
+  private async syncFromCatalogOnce() {
+    if (!this.catalogAdapter) return [] as string[];
+    let remote: WorkspaceExtension[];
+    try {
+      remote = await this.catalogAdapter.list();
+    } catch (error) {
+      console.error("Workspace extension catalog sync failed.", error);
+      return [];
+    }
+
+    let officialIds = new Set<string>();
+    try {
+      const marketplace = await loadResolvedPluginMarketplace();
+      officialIds = new Set(
+        marketplace.entries.filter((entry) => entry.publisher === "edgeever").map((entry) => entry.id),
+      );
+    } catch {
+      officialIds = new Set();
+    }
+
+    const actions = planCatalogReconcile({
+      local: this.extensions.map(toLocalCatalogExtension),
+      remote,
+      hasTrustAcknowledgement: hasAcknowledgedPluginTrustWarning(),
+      officialIds,
+    });
+    const pendingTrustPluginIds: string[] = [];
+    const failed = new Set<string>();
+    this.catalogSyncSuspended += 1;
+    try {
+      for (const action of actions) {
+        try {
+          if (action.type === "uninstall") {
+            await this.uninstall(action.extensionId);
+            continue;
+          }
+          if (action.type === "install") {
+            await this.installFromCatalogEntry(action.entry);
+            this.patchCatalogUpdatedAt(action.entry.extensionId, action.entry.updatedAt);
+            continue;
+          }
+          if (action.type === "setEnabled") {
+            if (failed.has(action.extensionId) || !this.extensions.some((item) => item.manifest.id === action.extensionId)) continue;
+            await this.setEnabled(action.extensionId, action.enabled);
+            const remoteEntry = remote.find((item) => item.extensionId === action.extensionId);
+            if (remoteEntry && !remoteEntry.deletedAt) this.patchCatalogUpdatedAt(action.extensionId, remoteEntry.updatedAt);
+            continue;
+          }
+          if (action.type === "awaitTrust") {
+            if (!failed.has(action.extensionId)) pendingTrustPluginIds.push(action.extensionId);
+            continue;
+          }
+          const extension = this.extensions.find((item) => item.manifest.id === action.extensionId);
+          if (extension) await this.pushCatalog(extension, { ignoreSuspend: true });
+        } catch (error) {
+          if (action.type === "install") failed.add(action.entry.extensionId);
+          console.error("Workspace extension catalog sync failed.", error);
+        }
+      }
+    } finally {
+      this.catalogSyncSuspended -= 1;
+    }
+    return pendingTrustPluginIds;
+  }
+
+  private async installFromCatalogEntry(entry: WorkspaceExtension) {
+    if ((entry.sourceKind === "github" || entry.sourceKind === "marketplace") && entry.repositoryUrl) {
+      const downloaded = await downloadPinnedGithubExtension(entry.repositoryUrl, entry.version);
+      return this.replaceInstalledExtension(
+        downloaded.manifest,
+        downloaded.manifestUrl,
+        catalogInstallSource({
+          ...entry,
+          repositoryUrl: downloaded.repositoryUrl,
+          releaseTag: downloaded.releaseTag ?? entry.releaseTag,
+        }),
+        downloaded.pluginPackage,
+      );
+    }
+    return this.installFromManifestUrl(entry.manifestUrl);
   }
 
   async installFromSource(input: string) {
@@ -497,7 +613,12 @@ export class EdgeEverPluginHost {
   }
 
   async installFromGithubRepository(input: string, marketplaceEntry?: MarketplaceEntry, confirmedManifest?: ExtensionManifest) {
-    const downloaded = await downloadGithubExtension(input);
+    // Official marketplace entries carry the live GitHub version after marketplace resolution.
+    const downloaded = marketplaceEntry
+      ? await downloadPinnedGithubExtension(input, marketplaceEntry.verification.version, {
+        requireStyles: Boolean(marketplaceEntry.verification.checksums?.stylesCss),
+      })
+      : await downloadGithubExtension(input);
     assertConfirmedManifest(confirmedManifest, downloaded.manifest);
     if (marketplaceEntry) this.assertMarketplaceDownload(marketplaceEntry, downloaded.manifest, downloaded.checksums);
     return this.replaceInstalledExtension(downloaded.manifest, downloaded.manifestUrl, {
@@ -505,6 +626,7 @@ export class EdgeEverPluginHost {
       verified: Boolean(marketplaceEntry),
       repositoryUrl: downloaded.repositoryUrl,
       ...(downloaded.releaseTag ? { releaseTag: downloaded.releaseTag } : {}),
+      ...(marketplaceEntry?.publisher === "edgeever" ? { publisher: "edgeever" } : {}),
     }, downloaded.pluginPackage);
   }
 
@@ -557,6 +679,7 @@ export class EdgeEverPluginHost {
       kind: marketplaceEntry ? "marketplace" : "manifest",
       verified: Boolean(marketplaceEntry),
       repositoryUrl: marketplaceEntry?.repositoryUrl,
+      ...(marketplaceEntry?.publisher === "edgeever" ? { publisher: "edgeever" } : {}),
     }, pluginPackage);
   }
 
@@ -573,7 +696,9 @@ export class EdgeEverPluginHost {
     const installed = this.installManifest(manifest, manifestUrl, source);
     try {
       if (installed.enabled && installed.manifest.type === "plugin") await this.activatePlugin(installed.manifest.id);
-      return installed;
+      this.markCatalogDirty(installed.manifest.id);
+      await this.pushCatalog(this.requireExtension(installed.manifest.id));
+      return this.requireExtension(installed.manifest.id);
     } catch (error) {
       if (previous) {
         this.extensions = [...this.extensions.filter((item) => item.manifest.id !== previous.manifest.id), previous]
@@ -593,11 +718,13 @@ export class EdgeEverPluginHost {
   installManifest(manifest: ExtensionManifest, manifestUrl: string, source: ExtensionInstallSource = { kind: "manifest", verified: false }) {
     const normalizedManifest = parseExtensionManifest(manifest);
     const existing = this.extensions.find((item) => item.manifest.id === normalizedManifest.id);
+    const installedAt = existing?.installedAt ?? new Date().toISOString();
     const installed: InstalledExtension = {
       manifestUrl,
       manifest: normalizedManifest,
       enabled: existing?.enabled ?? false,
-      installedAt: existing?.installedAt ?? new Date().toISOString(),
+      installedAt,
+      catalogUpdatedAt: existing?.catalogUpdatedAt ?? installedAt,
       error: null,
       source,
     };
@@ -624,12 +751,16 @@ export class EdgeEverPluginHost {
       }
       this.applyActiveTheme();
       this.persist();
+      this.markCatalogDirty(extensionId);
+      await this.pushCatalog(this.requireExtension(extensionId));
       return;
     }
 
     if (enabled) {
       this.extensions = this.extensions.map((item) => item.manifest.id === extensionId ? { ...item, enabled: true, error: null } : item);
       this.persist();
+      this.markCatalogDirty(extensionId);
+      await this.pushCatalog(this.requireExtension(extensionId));
       await this.activatePlugin(extensionId);
       return;
     }
@@ -637,6 +768,8 @@ export class EdgeEverPluginHost {
     await this.deactivatePlugin(extensionId);
     this.extensions = this.extensions.map((item) => item.manifest.id === extensionId ? { ...item, enabled: false, error: null } : item);
     this.persist();
+    this.markCatalogDirty(extensionId);
+    await this.pushCatalog(this.requireExtension(extensionId));
   }
 
   async uninstall(extensionId: string) {
@@ -649,6 +782,7 @@ export class EdgeEverPluginHost {
       this.applyActiveTheme();
     }
     this.persist();
+    await this.removeFromCatalog(extensionId);
     await Promise.all([
       this.packageStorage.remove(extensionId),
       this.secretStorage.clearNamespace(`${this.scope}:${extensionId}`),
@@ -717,6 +851,7 @@ export class EdgeEverPluginHost {
     container: HTMLElement,
     options?: PluginPanelOpenOptions,
     onRequestClose?: () => void | Promise<void>,
+    chromeAdapter?: PluginPanelChromeAdapter,
   ) {
     const key = `${pluginId}:${panelId}`;
     const panel = this.panels.get(key);
@@ -727,6 +862,11 @@ export class EdgeEverPluginHost {
       state: normalizePanelState(options?.state),
       requestClose: async () => {
         await onRequestClose?.();
+      },
+      shell: {
+        set(chrome) {
+          chromeAdapter?.set(normalizePluginPanelChrome(chrome));
+        },
       },
     });
     if (this.panels.get(key) !== panel) {
@@ -1504,6 +1644,39 @@ export class EdgeEverPluginHost {
     this.persist();
   }
 
+  private markCatalogDirty(extensionId: string) {
+    if (this.catalogSyncSuspended > 0) return;
+    const now = new Date().toISOString();
+    this.extensions = this.extensions.map((item) => item.manifest.id === extensionId ? { ...item, catalogUpdatedAt: now } : item);
+    this.persist();
+  }
+
+  private patchCatalogUpdatedAt(extensionId: string, catalogUpdatedAt: string) {
+    if (!this.extensions.some((item) => item.manifest.id === extensionId)) return;
+    this.extensions = this.extensions.map((item) => item.manifest.id === extensionId ? { ...item, catalogUpdatedAt } : item);
+    this.persist();
+  }
+
+  private async pushCatalog(extension: InstalledExtension, options?: { ignoreSuspend?: boolean }) {
+    if (!this.catalogAdapter) return;
+    if (this.catalogSyncSuspended > 0 && !options?.ignoreSuspend) return;
+    try {
+      const remote = await this.catalogAdapter.upsert(extension.manifest.id, toWorkspaceExtensionUpsert(extension));
+      this.patchCatalogUpdatedAt(extension.manifest.id, remote.updatedAt);
+    } catch (error) {
+      console.error("Workspace extension catalog sync failed.", error);
+    }
+  }
+
+  private async removeFromCatalog(extensionId: string) {
+    if (!this.catalogAdapter || this.catalogSyncSuspended > 0) return;
+    try {
+      await this.catalogAdapter.remove(extensionId);
+    } catch (error) {
+      console.error("Workspace extension catalog sync failed.", error);
+    }
+  }
+
   private persist() {
     writeStorageItem(INSTALLED_EXTENSIONS_STORAGE_KEY, JSON.stringify(this.extensions));
     this.refreshSnapshot();
@@ -1512,11 +1685,18 @@ export class EdgeEverPluginHost {
   private refreshSnapshot() {
     this.snapshot = {
       extensions: this.extensions.map((item) => ({ ...item, manifest: { ...item.manifest } })),
-      commands: [...this.commands.values()].map(({ pluginId, id, title }) => ({ pluginId, id, title })),
-      panels: [...this.panels.values()].map(({ pluginId, id, title, presentation }) => ({
+      commands: [...this.commands.values()].map(({ pluginId, id, title, listed, menu }) => ({
         pluginId,
         id,
         title,
+        listed: listed === false ? false : undefined,
+        menu: menu === false ? false : undefined,
+      })),
+      panels: [...this.panels.values()].map(({ pluginId, id, title, purpose, presentation }) => ({
+        pluginId,
+        id,
+        title,
+        purpose,
         presentation: presentation === "fullscreen" ? "fullscreen" : "dialog",
       })),
       embeds: [...this.embeds.values()].map(({ pluginId, type }) => ({ pluginId, type })),

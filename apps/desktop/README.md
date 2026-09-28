@@ -32,8 +32,9 @@ Regenerate committed icon assets after changing the brand mark:
 bun run prepare:desktop:icons
 ```
 
-This writes `apps/desktop/assets/icon.icns` (full ICNS) and `icon.png` (1024
-master). Packaging validation rejects incomplete ICNS types. Runtime also calls
+This writes `apps/desktop/assets/icon.icns` (full ICNS), `icon.png` (1024
+master), and the macOS menu-bar template icons from the brand mark.
+Packaging validation rejects incomplete ICNS types. Runtime also calls
 `app.dock.setIcon` as a Launch Services / Dock cache fallback.
 
 Preview the committed icon at its real Dock size without starting EdgeEver:
@@ -86,8 +87,8 @@ Formal Releases also contain a Linux x64 AppImage Preview built on Ubuntu
 22.04. The workflow verifies the Electron and Rust ELF architectures, caps the
 sidecar requirement at glibc 2.35, runs the packaged sidecar integration suite,
 performs an Xvfb first-launch smoke test, and publishes a matching
-`SHA256SUMS-linux.txt`. Linux Preview updates are manual until a real
-AppImage-to-AppImage update has passed the cross-version release gate. See
+`SHA256SUMS-linux.txt` and `latest-linux.yml`. Linux Preview releases must pass
+a real AppImage-to-AppImage automatic update through the cross-version gate. See
 [`docs/linux-preview.md`](../../docs/linux-preview.md).
 
 The desktop Settings page exposes the sidecar's local backup list. Restoring a

@@ -4,6 +4,16 @@ import XCTest
 
 /// Exercises shipped parity helpers (same semantics as Android `@edgeever/shared/mobile-ui` + notebooks).
 final class MobileUIParityTests: XCTestCase {
+    func testUnmatchedSystemLanguageUsesEnglishUI() {
+        XCTAssertTrue(AppUILocale.usesEnglish(preferenceCode: "system", systemLanguageCode: "ja"))
+        XCTAssertTrue(AppUILocale.usesEnglish(preferenceCode: "system", systemLanguageCode: "fr"))
+        XCTAssertTrue(AppUILocale.usesEnglish(preferenceCode: "system", systemLanguageCode: "en"))
+        XCTAssertTrue(AppUILocale.usesEnglish(preferenceCode: "system", systemLanguageCode: nil))
+        XCTAssertFalse(AppUILocale.usesEnglish(preferenceCode: "system", systemLanguageCode: "zh"))
+        XCTAssertFalse(AppUILocale.usesEnglish(preferenceCode: "zh-CN", systemLanguageCode: "ja"))
+        XCTAssertTrue(AppUILocale.usesEnglish(preferenceCode: "en-US", systemLanguageCode: "zh"))
+    }
+
     func testToggleFilterReturnsToAllWhenPressedAgain() {
         XCTAssertEqual(
             MobileUI.toggleMemoFilterMode(current: .all, requested: .pinned),
@@ -55,6 +65,14 @@ final class MobileUIParityTests: XCTestCase {
             MobileUI.toggleTagSelection(current: ["new"], tag: "new", maxSelections: 1),
             []
         )
+    }
+
+    func testExactTagMatchIgnoresCaseAndOverlappingNames() {
+        XCTAssertTrue(MobileUI.memoHasExactTag(tags: ["Project Alpha", "Work"], tag: "project alpha"))
+        XCTAssertTrue(MobileUI.memoHasExactTag(tags: ["Project Alpha", "Work"], tag: " project alpha "))
+        XCTAssertFalse(MobileUI.memoHasExactTag(tags: ["Project Alpha", "Work"], tag: "project"))
+        XCTAssertFalse(MobileUI.memoHasExactTag(tags: ["Homework"], tag: "work"))
+        XCTAssertFalse(MobileUI.memoHasExactTag(tags: ["demo-extra"], tag: "demo"))
     }
 
     func testMemoListTimestampMatchesSortMode() {

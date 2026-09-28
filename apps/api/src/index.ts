@@ -7,7 +7,7 @@ import {
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { resolveContainerImageSource } from "./container-image-source";
-import openApiSpec from "../../../docs/openapi.json";
+import apiProbe from "../../../docs/openapi.json";
 import releaseSummary from "../../../release-summary.json";
 import {
   authenticateRequest,
@@ -90,6 +90,7 @@ import { registerPluginDistributionRoutes } from "./plugin-distribution-routes";
 import { registerSyncRoutes } from "./sync-routes";
 import { registerMemoRoutes } from "./memo-routes";
 import { registerScheduledTaskRoutes } from "./scheduled-task-routes";
+import { registerWorkspaceExtensionRoutes } from "./workspace-extension-routes";
 import { registerBackupRoutes } from "./backup-routes";
 import { registerMcpRoutes } from "./mcp-routes";
 import { executeWorkspaceTool } from "./mcp-tool-executor";
@@ -122,6 +123,7 @@ import {
 } from "./user-routes";
 import { registerNotebookRoutes } from "./notebook-routes";
 import { registerMemoShareRoutes, registerPublicShareRoutes } from "./share-routes";
+import { registerPublicTableFormRoutes, registerTableFormRoutes } from "./table-form-routes";
 import {
   deleteStoredObjects,
   getActiveObjectStorageConfig,
@@ -148,10 +150,18 @@ const DEMO_RESET_COOLDOWN_MS = 60 * 1000;
 const DEFAULT_R2_BUCKET_NAME = "edgeever-resources";
 const app = new Hono<AppEnv>();
 
+// Packaged desktop uses edgeever-app://app; the previous file:// renderer sent Origin "null".
+const API_CORS_ORIGINS = [
+  "http://127.0.0.1:5173",
+  "http://localhost:5173",
+  "null",
+  "edgeever-app://app",
+];
+
 app.use(
   "/api/*",
   cors({
-    origin: ["http://127.0.0.1:5173", "http://localhost:5173", "null"],
+    origin: API_CORS_ORIGINS,
     allowHeaders: ["Content-Type", "Authorization"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
@@ -161,7 +171,7 @@ app.use(
 app.use(
   "/mcp",
   cors({
-    origin: ["http://127.0.0.1:5173", "http://localhost:5173", "null"],
+    origin: API_CORS_ORIGINS,
     allowHeaders: ["Content-Type", "Authorization"],
     allowMethods: ["GET", "POST", "OPTIONS"],
     credentials: true,
@@ -232,9 +242,11 @@ app.get("/api/health", async (c) => {
   });
 });
 
-app.get("/api/openapi.json", (c) => c.json(openApiSpec));
+// Reachability probe only. Not an API catalog. Agents should use MCP.
+app.get("/api/openapi.json", (c) => c.json(apiProbe));
 
 registerPublicShareRoutes(app);
+registerPublicTableFormRoutes(app);
 
 registerAuthRoutes(app, {
   authenticateRequest: (...args) => authenticateRequest(...args),
@@ -319,7 +331,9 @@ registerSyncRoutes(app, {
 registerTagRoutes(app);
 registerPluginDistributionRoutes(app);
 registerScheduledTaskRoutes(app);
+registerWorkspaceExtensionRoutes(app, { isDemoMode: (...args) => isDemoMode(...args) });
 registerMemoShareRoutes(app);
+registerTableFormRoutes(app);
 registerTemplateRoutes(app, {
   createMemoRecord: (...args) => createMemoRecord(...args),
   getMemoDetail: (...args) => getMemoDetail(...args),
@@ -327,6 +341,7 @@ registerTemplateRoutes(app, {
 
 registerMemoRoutes(app, {
   clampNumber: (...args) => clampNumber(...args),
+  createImageResource: (...args) => createImageResource(...args),
   createMemo: (...args) => createMemoRecord(...args),
   createMemoEditSession: (...args) => createMemoEditSession(...args),
   deleteMemo: (...args) => deleteMemoRecord(...args),
