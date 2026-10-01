@@ -1,6 +1,6 @@
 <div align="center">
   <h1>
-    <img src="assets/brand/edgeever-icon.svg" alt="EdgeEver logo" width="40" align="absmiddle" /> EdgeEver
+    <img src="assets/brand/edgeever-icon.svg" alt="EdgeEver logo" width="48" align="absmiddle" /> EdgeEver
   </h1>
   <p>
     <b>An open-source, AI-native knowledge base & portable Evernote alternative</b>
@@ -10,6 +10,7 @@
     <a href="https://github.com/tianma-if/edgeever/network/members"><img src="https://img.shields.io/github/forks/tianma-if/edgeever?style=social" alt="GitHub Forks" /></a>
     <a href="https://github.com/tianma-if/edgeever/pkgs/container/edgeever"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fghcr-badge.elias.eu.org%2Fapi%2Ftianma-if%2Fedgeever%2Fedgeever&query=downloadCount&style=social&logo=docker&label=Docker%20Pulls" alt="Docker Pulls" /></a>
     <a href="https://www.producthunt.com/products/edgeever?utm_source=other&utm_medium=social"><img src="https://img.shields.io/badge/Product%20Hunt-ea532a?style=social&logo=product-hunt" alt="Product Hunt" /></a>
+    <a href="https://hellogithub.com/repository/tianma-if/edgeever" target="_blank"><img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=150fee4403f6433880bda91e9576ac06&claim_uid=TWNAjisURpnhL1l&theme=small" alt="Featured｜HelloGitHub" /></a>
     <a href="https://afdian.com/a/tianma-if"><img src="https://img.shields.io/badge/Afdian-946ce6?style=social&logo=github-sponsors" alt="Sponsor on Afdian" /></a>
   </p>
   <p>
@@ -43,7 +44,7 @@ Many long-time **Evernote** users simply want a **reliable, open, and fast** per
 **EdgeEver fills this gap**: The entire stack is open source, including sync and self-hosting. It keeps the three-pane layout you know, stays silky-smooth and lightweight even with 10,000+ notes, and ships native AI agents with zero-cost deployment.
 
 > 💡 **Recommended Workflow:**
-> Capture inspiration seamlessly across all devices and organize deeply in the classic three-pane view. Powered by native MCP, it not only lets AI agents retrieve and synthesize your knowledge, but also connects with your favorite productivity tools like Notion and Feishu. Publish anywhere with one-click formatting—100% self-hosted at zero cost, building an open and truly owned second brain.
+> Capture inspiration seamlessly across all devices and organize deeply in the classic three-pane view. Powered by native MCP and ACP, external agents can retrieve and organize your notes seamlessly, while the desktop app lets you collaborate deeply with local AI agents on your machine. Publish anywhere with one-click formatting—100% self-hosted at zero cost, building an open and truly owned second brain.
 
 ## Online Demo
 
@@ -68,8 +69,8 @@ The public demo resets every day at 3:00 AM (China Standard Time) and restores s
 - **Deploy Your Way**: Run on Cloudflare's free serverless platform or with Docker on a VPS, NAS, or home server. Based on Cloudflare's free storage allowances, a personal deployment can hold roughly 150,000 short notes and 50,000 images; Docker storage scales on demand to easily support millions of notes and a vast image library.
 - **Open Data, No Vendor Lock-in**: Built on standard SQLite with complete REST API, MCP, and CLI access. Your knowledge is stored transparently and accessible anytime without being locked to a single app.
 - **Lossless ZIP Backup & Portability**: Export your complete library as a clean archive containing Markdown, Front Matter, nested folders, relative attachment links, and version histories for instant restoration anywhere.
-- **Native AI Agent Synergy**: Deep integration with Model Context Protocol (MCP) allows AI Agents like Claude Code, Codex, Antigravity, and WorkBuddy to read, organize, and summarize your notes, or sync seamlessly with Notion and Feishu Bitable.
-- **Bring Your Own AI Models**: Connect OpenAI, Anthropic, or Gemini-compatible services and third-party API relays to empower your editor with smart note summarization, key point extraction, proofreading, translation, and text continuation on full notes or selected text.
+- **Native AI Agent Synergy**: Built-in Model Context Protocol (MCP) support allows external AI Agents to directly read, organize, and summarize notes; the desktop app also connects directly to local AI Agents running on your machine (such as Codex, Antigravity, Claude Code, and WorkBuddy) via Agent Client Protocol (ACP) for collaborative writing.
+- **Bring Your Own AI Models**: Connect OpenAI, Anthropic, or Gemini-compatible services and third-party API relays to power the built-in Agent and companion sidebar, bringing smart note summarization, key point extraction, proofreading, translation, and text continuation to full notes or selected text.
 - **Rich Plugin API**: Extend EdgeEver with the [Plugin API](docs/plugin-development.md).
 - **Unlimited Multi-Device Sync**: No commercial device caps or paywalls. Enjoy seamless synchronization across PC, tablet, and mobile via web, PWA, or browser.
 - **Classic Three-Pane Layout & Focus Mode**: Clean navigation featuring notebook trees, note lists, and an expansive editor, with a desktop focus mode to eliminate distractions.
@@ -146,10 +147,11 @@ Use the GitHub-hosted installer and the official GHCR image:
 curl -fsSL https://edgeever.org/install.sh | bash
 ```
 
-The command pulls the latest image, generates an administrator password, starts
-EdgeEver with Docker Compose, and schedules daily automatic updates.
+The command pulls the latest image, generates an administrator password, and starts EdgeEver with Docker Compose.
 
 See the [Docker deployment guide](docs/deploy-docker.md) for manual deployment and configuration.
+
+After installation, updates run automatically each day by default. To update manually, run `~/edgeever/update.sh` on the deployment server.
 
 ---
 
@@ -161,13 +163,16 @@ The instance administrator can create, disable, or reset member accounts in **Pr
 
 ## Browser Web Clipper
 
-The Web Clipper is officially published for Chrome, Microsoft Edge, and Firefox. Install it from the store for your browser (Microsoft Edge users can install the Chrome Web Store version directly):
-
 <p>
   <a href="https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo"><img src="https://raw.githubusercontent.com/alrra/browser-logos/58881b84c4d73adc03c06fa2c275a7abee02d935/src/chrome/chrome.svg" alt="Install EdgeEver Web Clipper for Google Chrome" width="36" height="36" /></a>&nbsp;&nbsp;
   <a href="https://chromewebstore.google.com/detail/edgeever-web-clipper/gjadpfmanienmlofajibkfkkpfdkclgo"><img src="https://raw.githubusercontent.com/alrra/browser-logos/58881b84c4d73adc03c06fa2c275a7abee02d935/src/edge/edge.svg" alt="Install EdgeEver Web Clipper for Microsoft Edge" width="36" height="36" /></a>&nbsp;&nbsp;
   <a href="https://addons.mozilla.org/firefox/addon/edgeever-web-clipper/"><img src="https://raw.githubusercontent.com/alrra/browser-logos/58881b84c4d73adc03c06fa2c275a7abee02d935/src/firefox/firefox.svg" alt="Install EdgeEver Web Clipper for Firefox" width="36" height="36" /></a>
 </p>
+
+- **Smart Article Extraction**: Automatically extracts article content and converts it into clean Markdown, preserving the source URL and clipping timestamp.
+- **Selection & Context Menu Clipping**: Save selected text or right-clicked images directly as notes without capturing the entire page.
+- **X (Twitter) Post Clipping**: Right-click any post to automatically expand full text and archive the author, timestamp, and attached images together.
+- **Private Self-Hosted Direct Connection**: Sends clipped content directly to your personal EdgeEver instance without third-party relays.
 
 ## Community and Feedback
 
@@ -240,7 +245,7 @@ Open **Profile** -> **Import and export** to export or import an EdgeEver ZIP. I
 
 ## MCP
 
-Create an API token in **Profile** -> **MCP settings** and give it to your AI Agent. The Agent can then securely manage your knowledge base within your account permissions. It supports both text notes and diagram notes (including mind maps, flowcharts, and architecture diagrams) with full CRUD capabilities. The Agent can also manage note templates and AI instructions, and connect with tools such as Notion databases and Feishu Bitable.
+Create an API token in **Profile** -> **MCP settings** and give it to your AI Agent. The Agent can then securely manage your knowledge base within your account permissions. It supports both text notes and diagram notes (including mind maps, flowcharts, and architecture diagrams) with full CRUD capabilities. The Agent can create a structured table note from a field plan, edit its fields, and read, add, update, or delete its records. The Agent can also manage note templates and AI instructions.
 
 > 💡 **Inspiration:**
 > Make AI your true knowledge orchestrator and creative co-pilot—instantly turn concepts into interactive mind maps and architecture diagrams, while supplying private context to your AI Agents. Paired with EdgeEver’s powerful rich-text editing and elegant typography, AI-assisted content becomes beautifully structured, polished, and publication-ready knowledge assets.

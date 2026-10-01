@@ -64,6 +64,7 @@ import {
 import {
   MOBILE_EDITOR_ACTIVE_FLAGS,
   MOBILE_EDITOR_TOOLBAR_ACTIONS,
+  clearMobileEditorUndoHistory,
   getMobileEditorInputAttributes,
   getMobileEditorImageScaleLabel,
   getMobileEditorImageWidthPresetLabel,
@@ -869,6 +870,7 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
       // composer reset). Callers already own persistence for that state, so an
       // emitted update would create a delayed stale write during screen teardown.
       editor.commands.setContent(next, { emitUpdate: false });
+      clearMobileEditorUndoHistory(editor);
     } catch {
       // Ignore malformed payloads from the native bridge.
     }
@@ -1449,6 +1451,7 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
     const incoming = JSON.stringify(next);
     if (current !== incoming) {
       editor.commands.setContent(next, { emitUpdate: false });
+      clearMobileEditorUndoHistory(editor);
     }
   }, [editor, isViewer, props.baseUrl, props.content, props.locale]);
 
@@ -1563,6 +1566,20 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
       (activeEditor?.isActive("taskList") ? MOBILE_EDITOR_ACTIVE_FLAGS.taskList : 0) |
       (activeEditor?.isActive("blockquote") ? MOBILE_EDITOR_ACTIVE_FLAGS.blockquote : 0),
   });
+  const historyState = useEditorState({
+    editor,
+    selector: ({ editor: activeEditor }) => {
+      if (!activeEditor) return 0;
+      const available = (command: "undo" | "redo") => {
+        try {
+          return activeEditor.can().chain().focus()[command]().run();
+        } catch {
+          return false;
+        }
+      };
+      return (available("undo") ? 1 : 0) | (available("redo") ? 2 : 0);
+    },
+  });
   const requestOpenAiForSelection = () => {
     if (openAiForSelection()) {
       setAiSelectionHint(false);
@@ -1600,6 +1617,8 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
   };
 
   const toolbarIcons: Record<MobileEditorToolbarActionId, ReactNode> = {
+    undo: <UndoIcon />,
+    redo: <RedoIcon />,
     image: <ImagePlusIcon />,
     bold: <BoldIcon />,
     bulletList: <ListIcon />,
@@ -1611,6 +1630,8 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
   };
   const activeListItemType = editor?.isActive("taskItem") ? "taskItem" : "listItem";
   const toolbarHandlers: Record<MobileEditorToolbarActionId, () => void> = {
+    undo: () => editor?.chain().focus().undo().run(),
+    redo: () => editor?.chain().focus().redo().run(),
     image: () => void insertImage(),
     bold: () => editor?.chain().focus().toggleBold().run(),
     bulletList: () => editor?.chain().focus().toggleBulletList().run(),
@@ -1630,7 +1651,9 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
               <ToolbarButton
                 key={action.id}
                 active={action.activeFlag > 0 && Boolean(toolbarState & action.activeFlag)}
-                disabled={(action.id === "increaseListIndent"
+                disabled={(action.id === "undo" && ((historyState ?? 0) & 1) === 0)
+                  || (action.id === "redo" && ((historyState ?? 0) & 2) === 0)
+                  || (action.id === "increaseListIndent"
                     && !Boolean(editor?.can().chain().focus().sinkListItem(activeListItemType).run()))
                   || (action.id === "decreaseListIndent"
                     && !Boolean(editor?.can().chain().focus().liftListItem(activeListItemType).run()))}
@@ -2066,6 +2089,20 @@ const EditorIcon = ({ children, size, strokeWidth }: { children: ReactNode; size
 
 // Keep the same Lucide paths as the PWA toolbar without pulling the full icon
 // barrel into the standalone DOM bundle (which adds roughly 1.8 MB in Metro).
+const UndoIcon = () => (
+  <EditorIcon size={18} strokeWidth={2}>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" />
+  </EditorIcon>
+);
+
+const RedoIcon = () => (
+  <EditorIcon size={18} strokeWidth={2}>
+    <path d="m15 14 5-5-5-5" />
+    <path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13" />
+  </EditorIcon>
+);
+
 const ImagePlusIcon = () => (
   <EditorIcon size={18} strokeWidth={2}>
     <path d="M16 5h6" />
@@ -3199,6 +3236,21 @@ const getEditorStyles = (theme: "light" | "dark", options?: { viewer?: boolean }
   .edgeever-editor-content a.edgeever-attachment-kind-archive::before { background: ${theme === "dark" ? "#713f12" : "#fffbeb"}; color: ${theme === "dark" ? "#fde68a" : "#d97706"}; content: "ZIP"; }
   .edgeever-editor-content a.edgeever-attachment-kind-code::before { background: ${theme === "dark" ? "#581c87" : "#faf5ff"}; color: ${theme === "dark" ? "#d8b4fe" : "#8b5cf6"}; content: "</>"; }
   .edgeever-editor-content a.edgeever-attachment-kind-text::before { background: ${theme === "dark" ? "#334155" : "#f1f5f9"}; color: ${theme === "dark" ? "#cbd5e1" : "#64748b"}; content: "TXT"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-apk::before { background: ${theme === "dark" ? "#064e3b" : "#ecfdf5"}; color: ${theme === "dark" ? "#6ee7b7" : "#059669"}; content: "APK"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-exe::before { background: ${theme === "dark" ? "#0c4a6e" : "#f0f9ff"}; color: ${theme === "dark" ? "#7dd3fc" : "#0284c7"}; content: "EXE"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-dmg::before { background: ${theme === "dark" ? "#4c1d95" : "#f5f3ff"}; color: ${theme === "dark" ? "#c4b5fd" : "#7c3aed"}; content: "DMG"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-linux::before { background: ${theme === "dark" ? "#7c2d12" : "#fff7ed"}; color: ${theme === "dark" ? "#fdba74" : "#ea580c"}; content: "LINUX"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-executable::before { background: ${theme === "dark" ? "#134e4a" : "#ccfbf1"}; color: ${theme === "dark" ? "#5eead4" : "#0d9488"}; content: "BIN"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-book::before { background: ${theme === "dark" ? "#78350f" : "#fef3c7"}; color: ${theme === "dark" ? "#fcd34d" : "#b45309"}; content: "BOOK"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-font::before { background: ${theme === "dark" ? "#312e81" : "#e0e7ff"}; color: ${theme === "dark" ? "#a5b4fc" : "#4f46e5"}; content: "FONT"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-diskimage::before { background: ${theme === "dark" ? "#164e63" : "#cffafe"}; color: ${theme === "dark" ? "#67e8f9" : "#0891b2"}; content: "ISO"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-database::before { background: ${theme === "dark" ? "#701a75" : "#fae8ff"}; color: ${theme === "dark" ? "#f0abfc" : "#c026d3"}; content: "DB"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-design::before { background: ${theme === "dark" ? "#831843" : "#fdf2f8"}; color: ${theme === "dark" ? "#f472b6" : "#db2777"}; content: "DESIGN"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-model3d::before { background: ${theme === "dark" ? "#1e3a8a" : "#eff6ff"}; color: ${theme === "dark" ? "#93c5fd" : "#2563eb"}; content: "3D"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-script::before { background: ${theme === "dark" ? "#064e3b" : "#ecfdf5"}; color: ${theme === "dark" ? "#6ee7b7" : "#059669"}; content: "SHELL"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-log::before { background: ${theme === "dark" ? "#27272a" : "#f4f4f5"}; color: ${theme === "dark" ? "#a1a1aa" : "#71717a"}; content: "LOG"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-certificate::before { background: ${theme === "dark" ? "#713f12" : "#fefce8"}; color: ${theme === "dark" ? "#fde047" : "#ca8a04"}; content: "KEY"; }
+  .edgeever-editor-content a.edgeever-attachment-kind-diagram::before { background: ${theme === "dark" ? "#134e4a" : "#f0fdfa"}; color: ${theme === "dark" ? "#5eead4" : "#0d9488"}; content: "DIAG"; }
   .edgeever-editor-content .edgeever-unsupported-content {
     border: 1px dashed ${theme === "dark" ? "#64748b" : "#94a3b8"};
     border-radius: 8px;

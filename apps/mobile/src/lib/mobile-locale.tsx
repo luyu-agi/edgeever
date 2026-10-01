@@ -1,3 +1,4 @@
+import { DEFAULT_MEMO_TITLE } from "@edgeever/shared";
 import { enUS, ja, zhCN } from "@edgeever/shared/i18n";
 import { resolveSupportedLocale } from "@edgeever/shared/i18n/locales";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
@@ -165,6 +166,42 @@ const mobileOnlyTranslations = new Map<string, string>([
   ["当前内容将被模板内容替换。", "The current content will be replaced by the template."],
   ["替换", "Replace"],
   ["关闭", "Close"],
+  ["修改后会保留当前设备登录，并退出其他设备上的登录会话。", "Keeps this device signed in and signs out other sessions."],
+  ["添加标签", "Add tags"],
+  ["正在生成智能标签", "Generating smart tags"],
+  ["智能标签生成失败", "Could not generate smart tags"],
+  ["智能标签已添加", "Smart tags added"],
+  ["没有找到适合这篇笔记的新标签。", "No new tags fit this note."],
+  ["没有匹配的笔记本", "No matching notebooks"],
+  ["偏好设置", "Preferences"],
+  ["切换产品界面的显示语言。", "Choose the language used in the app."],
+  ["上传大图时在本地压缩，节省资源占用。", "Compress large images on this device before upload."],
+  ["已恢复上次未完成的本地草稿", "Restored your unfinished local draft"],
+  ["连接你的自托管笔记空间", "Connect to your self-hosted notes"],
+  ["首次登录密码", "Password for first sign-in"],
+  ["GitHub 仓库", "GitHub repository"],
+  ["操作失败，请稍后再试", "Something went wrong. Please try again."],
+  ["正在剪藏文章", "Clipping article"],
+  ["正在提取标题、正文和图片链接…", "Extracting the title, body, and image links…"],
+  ["正文剪藏失败", "Article extraction failed"],
+  ["已保留文章链接，你可以稍后重新分享重试。", "The article link was kept. Share it again later to retry."],
+  ["页面加载完成，但没有找到可剪藏的正文。", "The page finished loading, but there was no article text to clip."],
+  ["微信文章加载超时。", "The WeChat article took too long to load."],
+  ["没有找到可剪藏的正文。", "No article text was found to clip."],
+  ["无法解析微信文章正文。", "Could not read the WeChat article text."],
+  ["微信文章加载失败。", "Could not load the WeChat article."],
+  ["微信文章请求失败（HTTP {{status}}）。", "The WeChat article request failed (HTTP {{status}})."],
+  ["无法读取分享图片", "Could not read the shared image"],
+  ["请重新分享后再试。", "Share it again and retry."],
+  ["无法保存图片", "Unable to save images"],
+  ["请先在 EdgeEver 中创建一个笔记本。", "Create a notebook in EdgeEver first."],
+  ["分享的图片", "Shared image"],
+  ["分享的图片（{{count}} 张）", "Shared images ({{count}})"],
+  ["无法读取分享内容", "Could not read the shared content"],
+  ["分享内容里没有可识别的网页链接或图片。", "The shared content has no recognizable web link or image."],
+  ["无法保存剪藏", "Unable to save clip"],
+  ["剪藏失败", "Could not clip the page"],
+  ["无法读取分享的网页，请稍后重试。", "Could not read the shared page. Try again later."],
 ]);
 
 const mobileOnlyJapanese = new Map<string, string>([
@@ -314,6 +351,42 @@ const mobileOnlyJapanese = new Map<string, string>([
   ["当前内容将被模板内容替换。", "現在の内容はテンプレートの内容に置き換わります。"],
   ["替换", "置き換え"],
   ["关闭", "閉じる"],
+  ["修改后会保留当前设备登录，并退出其他设备上的登录会话。", "この端末のログインは維持し、他の端末のセッションは終了します。"],
+  ["添加标签", "タグを追加"],
+  ["正在生成智能标签", "スマートタグを生成しています"],
+  ["智能标签生成失败", "スマートタグを生成できませんでした"],
+  ["智能标签已添加", "スマートタグを追加しました"],
+  ["没有找到适合这篇笔记的新标签。", "このノートに合う新しいタグはありません。"],
+  ["没有匹配的笔记本", "一致するノートブックはありません"],
+  ["偏好设置", "環境設定"],
+  ["切换产品界面的显示语言。", "アプリの表示言語を切り替えます。"],
+  ["上传大图时在本地压缩，节省资源占用。", "大きな画像はアップロード前にこの端末で圧縮し、容量を抑えます。"],
+  ["已恢复上次未完成的本地草稿", "前回の未完成の下書きを復元しました"],
+  ["连接你的自托管笔记空间", "セルフホストのノートスペースに接続"],
+  ["首次登录密码", "初回ログインのパスワード"],
+  ["GitHub 仓库", "GitHub リポジトリ"],
+  ["操作失败，请稍后再试", "操作に失敗しました。しばらくしてから再試行してください。"],
+  ["正在剪藏文章", "記事を取り込んでいます"],
+  ["正在提取标题、正文和图片链接…", "タイトル、本文、画像リンクを抽出しています…"],
+  ["正文剪藏失败", "本文を取り込めませんでした"],
+  ["已保留文章链接，你可以稍后重新分享重试。", "記事リンクは残してあります。あとから再共有してやり直せます。"],
+  ["页面加载完成，但没有找到可剪藏的正文。", "ページの読み込みは終わりましたが、取り込める本文がありません。"],
+  ["微信文章加载超时。", "WeChat 記事の読み込みがタイムアウトしました。"],
+  ["没有找到可剪藏的正文。", "取り込める本文が見つかりません。"],
+  ["无法解析微信文章正文。", "WeChat 記事の本文を読み取れませんでした。"],
+  ["微信文章加载失败。", "WeChat 記事を読み込めませんでした。"],
+  ["微信文章请求失败（HTTP {{status}}）。", "WeChat 記事のリクエストに失敗しました（HTTP {{status}}）。"],
+  ["无法读取分享图片", "共有された画像を読み取れませんでした"],
+  ["请重新分享后再试。", "もう一度共有してから再試行してください。"],
+  ["无法保存图片", "画像を保存できませんでした"],
+  ["请先在 EdgeEver 中创建一个笔记本。", "先に EdgeEver でノートブックを作成してください。"],
+  ["分享的图片", "共有された画像"],
+  ["分享的图片（{{count}} 张）", "共有された画像（{{count}} 枚）"],
+  ["无法读取分享内容", "共有された内容を読み取れませんでした"],
+  ["分享内容里没有可识别的网页链接或图片。", "共有された内容に、認識できるウェブリンクも画像もありません。"],
+  ["无法保存剪藏", "クリップを保存できませんでした"],
+  ["剪藏失败", "ページを取り込めませんでした"],
+  ["无法读取分享的网页，请稍后重试。", "共有されたページを読み取れませんでした。しばらくしてから再試行してください。"],
 ]);
 
 const flattenStrings = (value: unknown, prefix = "", output = new Map<string, string>()) => {
@@ -415,6 +488,23 @@ export const translateMobileText = (value: string, locale: SupportedMobileLocale
 
 let currentResolvedMobileLocale: SupportedMobileLocale = resolveSystemLocale();
 export const translateCurrentMobileText = (value: string) => translateMobileText(value, currentResolvedMobileLocale);
+
+export const localizeUntitledMemoTitle = (
+  title: string | null | undefined,
+  locale: SupportedMobileLocale,
+) => {
+  const trimmed = title?.trim() ?? "";
+  if (trimmed && trimmed !== DEFAULT_MEMO_TITLE) {
+    return trimmed;
+  }
+  return translateMobileText(DEFAULT_MEMO_TITLE, locale);
+};
+
+export const localizeMissingNotebookName = (locale: SupportedMobileLocale) => {
+  if (locale === "en-US") return "Uncategorized";
+  if (locale === "ja") return "未分類";
+  return "未分类";
+};
 
 const MobileLocaleContext = createContext<MobileLocaleContextValue>({
   preference: "system",

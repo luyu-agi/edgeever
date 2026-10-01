@@ -30,7 +30,7 @@ import {
   type MobileLocalePreference,
   type MobileMemoListDensity,
 } from "../lib/preferences";
-import { useMobileLocale } from "../lib/mobile-locale";
+import { localizeUntitledMemoTitle, localizeMissingNotebookName, useMobileLocale } from "../lib/mobile-locale";
 import { useSession } from "../lib/session";
 import {
   clearMobileMemoUpdateQueueItem,
@@ -140,7 +140,7 @@ export const WorkspaceScreen = ({
   onIncomingShareHandled?: () => void;
 }) => {
   const { resolvedTheme } = useMobileTheme();
-  const { preference: localePreference, resolvedLocale, setPreference: setLocalePreference } = useMobileLocale();
+  const { preference: localePreference, resolvedLocale, setPreference: setLocalePreference, translate } = useMobileLocale();
   const hasUpdate = useMobileUpdateAvailable();
   refreshWorkspaceThemeStyles(resolvedTheme);
   const { client, session, signOut } = useSession();
@@ -550,25 +550,25 @@ export const WorkspaceScreen = ({
   const handleRenderedClipCaptured = useCallback((page: MobileRenderedWebPage) => {
     if (!incomingClipCaptureUrl) return;
     openIncomingClipDraft(
-      buildMobileWebClipDraftFromRenderedPage(incomingClipCaptureUrl, page),
+      buildMobileWebClipDraftFromRenderedPage(incomingClipCaptureUrl, page, { locale: resolvedLocale }),
     );
     finishIncomingShare();
-  }, [finishIncomingShare, incomingClipCaptureUrl, openIncomingClipDraft]);
+  }, [finishIncomingShare, incomingClipCaptureUrl, openIncomingClipDraft, resolvedLocale]);
 
   const handleRenderedClipFailed = useCallback((message: string) => {
     const sourceUrl = incomingClipCaptureUrl;
     if (!sourceUrl) return;
     setIncomingClipCaptureUrl(null);
-    void buildMobileWebClipDraft(sourceUrl)
+    void buildMobileWebClipDraft(sourceUrl, { locale: resolvedLocale })
       .then((draft) => {
         openIncomingClipDraft(draft);
         Alert.alert(
           "正文剪藏失败",
-          `${message} 已保留文章链接，你可以稍后重新分享重试。`,
+          `${translate(message)} ${translate("已保留文章链接，你可以稍后重新分享重试。")}`,
         );
       })
       .finally(finishIncomingShare);
-  }, [finishIncomingShare, incomingClipCaptureUrl, openIncomingClipDraft]);
+  }, [finishIncomingShare, incomingClipCaptureUrl, openIncomingClipDraft, resolvedLocale, translate]);
 
   useEffect(() => {
     if (incomingShareIsResolving) {
@@ -606,7 +606,7 @@ export const WorkspaceScreen = ({
       setCreateSeed({
         contentMarkdown: "",
         tagsText: "",
-        title: sharedImages.length === 1 ? "分享的图片" : `分享的图片（${sharedImages.length} 张）`,
+        title: translate(sharedImages.length === 1 ? "分享的图片" : `分享的图片（${sharedImages.length} 张）`),
       });
       setActiveView("notes");
       setMemoView("notebook");
@@ -650,7 +650,7 @@ export const WorkspaceScreen = ({
         active = false;
       };
     }
-    void buildMobileWebClipDraft(sourceUrl)
+    void buildMobileWebClipDraft(sourceUrl, { locale: resolvedLocale })
       .then((draft) => {
         if (!active) {
           return;
@@ -680,7 +680,9 @@ export const WorkspaceScreen = ({
     notebooks.length,
     notebooksQuery.isSuccess,
     openIncomingClipDraft,
+    resolvedLocale,
     sharedImages,
+    translate,
   ]);
 
   useEffect(() => {
@@ -969,9 +971,10 @@ export const WorkspaceScreen = ({
 
       const response = await client.createMemoShare(memo.id);
       const shareUrl = `${session.baseUrl.replace(/\/+$/, "")}/share/${encodeURIComponent(response.share.token)}`;
+      const shareTitle = localizeUntitledMemoTitle(memo.title, resolvedLocale);
       await NativeShare.share({
-        message: `${memo.title?.trim() || DEFAULT_MEMO_TITLE}\n${shareUrl}`,
-        title: memo.title?.trim() || DEFAULT_MEMO_TITLE,
+        message: `${shareTitle}\n${shareUrl}`,
+        title: shareTitle,
         url: shareUrl,
       });
     },
@@ -1277,7 +1280,7 @@ export const WorkspaceScreen = ({
         isSaving={updateMemoMutation.isPending || localUpdateMemoMutation.isPending}
         isSharing={shareMemoMutation.isPending}
         memo={selectedMemo}
-        notebookName={notebooks.find((notebook) => notebook.id === selectedMemo?.notebookId)?.name ?? "未分类"}
+        notebookName={notebooks.find((notebook) => notebook.id === selectedMemo?.notebookId)?.name ?? localizeMissingNotebookName(resolvedLocale)}
         notebooks={notebooks}
         onClose={closeDetail}
         onCloseEditor={closeRichEditor}

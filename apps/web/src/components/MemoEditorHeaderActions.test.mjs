@@ -15,18 +15,22 @@ describe("shared memo editor header actions", () => {
   test("owns every action shared by text and diagram notes", () => {
     expect(actionsSource).toContain("<Search");
     expect(actionsSource).toContain("<GitHubRepositoryLink");
-    expect(actionsSource).toContain("<SystemInfoDialog");
+    expect(actionsSource).not.toContain("SystemInfoDialog");
+    expect(actionsSource).not.toContain("systemInfo.title");
+    expect(actionsSource).not.toContain("setPreference(nextTheme)");
+    expect(actionsSource).not.toContain('t("common.githubRepository")');
     expect(actionsSource).toContain("<ExecutionCenterButton");
-    expect(actionsSource).toContain("setPreference(nextTheme)");
     expect(actionsSource).toContain("<MoreHorizontal");
   });
 
   test("is reused by both editors while text-only actions remain explicit slots", () => {
     expect(editorSource).toContain("<MemoEditorHeaderActions");
     expect(diagramSource).toContain("<MemoEditorHeaderActions");
-    expect(editorSource).toContain("textNoteActions={(\n");
     expect(editorSource).toContain("textNoteMenuItems=");
+    expect(editorSource).toContain("data-ai-assistant-launcher");
+    expect(editorSource).not.toContain("textNoteActions=");
     expect(diagramSource).not.toContain("textNoteActions=");
+    expect(diagramSource).not.toContain("data-ai-assistant-launcher");
     expect(diagramSource).not.toContain("<WeChatIcon");
   });
 
@@ -71,6 +75,13 @@ describe("shared memo editor header actions", () => {
     expect(densitySource.match(/MEMO_EDITOR_TOOLBAR_PADDING_CLASS_NAME =\s*"([^"]+)"/)?.[1]).not.toContain("sm:px-7");
     expect(densitySource).toContain("[--editor-reading-gutter:1rem] sm:[--editor-reading-gutter:1.75rem] lg:[--editor-reading-gutter:6rem]");
     expect(densitySource).not.toContain("min-[1600px]:flex");
+  });
+
+  test("cycles rich text and markdown from one toolbar button", () => {
+    expect(editorToolbarSource).toContain("const nextEditorViewMode = EDITOR_VIEW_MODES[activeEditorView === \"rich\" ? 1 : 0]");
+    expect(editorToolbarSource).toContain("onEditorViewChange(nextEditorViewMode.value)");
+    expect(editorToolbarSource).not.toContain("EDITOR_VIEW_MODES.map");
+    expect(editorToolbarSource).not.toContain('t("editorToolbar.viewMode")');
   });
 
   test("aligns the note title, notebook row, and article on one reading gutter", () => {
