@@ -34,6 +34,7 @@ import type {
   MemoRevision,
   MemoSummary,
   MemoShare,
+  ManagedMemoShare,
   PublicTableForm,
   TableFormSettings,
   TableFormUpdateInput,
@@ -75,7 +76,7 @@ import type {
   PluginPublicFetchResponse,
 } from "@edgeever/shared";
 
-const MAX_SINGLE_REQUEST_UPLOAD_BYTES = 5 * 1024 * 1024;
+export const MAX_SINGLE_REQUEST_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 async function consumeEventStream<T>(body: ReadableStream<Uint8Array>, onEvent: (event: T) => void) {
   const reader = body.getReader();
@@ -125,7 +126,7 @@ export type MultipartResourceUploadSource = {
   filename: string;
   mimeType: string;
   byteSize: number;
-  readPart: (start: number, end: number) => Promise<Blob>;
+  readPart: (start: number, end: number) => Promise<Blob | Uint8Array<ArrayBuffer>>;
 };
 
 export type InstanceHealth = {
@@ -251,6 +252,11 @@ export type ScheduledTaskRunHistoryResponse = {
 
 export type MemoShareResponse = {
   share: MemoShare | null;
+};
+
+export type ListMemoSharesResponse = {
+  shares: ManagedMemoShare[];
+  nextOffset: number | null;
 };
 
 export type PublicMemoShareResponse = {
@@ -1592,6 +1598,9 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
     getMemoShare: (memoId: string) =>
       request<MemoShareResponse>(`/api/v1/memos/${memoId}/share`),
 
+    listMemoShares: (offset = 0, limit = 50) =>
+      request<ListMemoSharesResponse>(`/api/v1/memo-shares?offset=${offset}&limit=${limit}`),
+
     createMemoShare: (memoId: string) =>
       request<{ share: MemoShare }>(`/api/v1/memos/${memoId}/share`, {
         method: "POST",
@@ -1817,6 +1826,8 @@ export const createEdgeEverClient = (options: EdgeEverClientOptions = {}) => {
       });
     },
 
+    claimPosterRender: () => request<{ job: null | { id: string; memoId: string; expectedRevision: number; templateId: string | null; claimToken: string; expiresAt: string } }>("/api/v1/poster-render/claim", { method: "POST", body: "{}" }),
+    completePosterRender: (id: string, input: { claimToken: string; document?: import("@edgeever/shared").PosterDocument; errorCode?: "render_failed" | "revision_conflict" | "client_timeout" }) => request<{ job: { status: string } }>(`/api/v1/poster-render/${encodeURIComponent(id)}/complete`, { method: "POST", body: JSON.stringify(input) }),
     uploadMemoResourceParts,
 
     updateMemo: (
