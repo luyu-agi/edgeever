@@ -709,7 +709,7 @@ export function createAcpHostRuntime(options = {}) {
   const handshakeTimeoutMs = options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
   const authenticationTimeoutMs = options.authenticationTimeoutMs ?? 5 * 60_000;
   const commandDeps = options;
-  const manager = options.adapterManager ?? (options.adapterStore ? createAcpAdapterManager({ root: options.adapterStore, executablePath: options.executablePath }) : null);
+  const manager = options.adapterManager ?? (options.adapterStore ? createAcpAdapterManager({ root: options.adapterStore, executablePath: options.executablePath, fetchImpl: options.adapterFetchImpl }) : null);
   const active = new Map();
   const updateFailures = new Map();
   const installingIds = new Set();
@@ -757,6 +757,13 @@ export function createAcpHostRuntime(options = {}) {
     try {
       if (signal?.aborted) throw Object.assign(new Error("connection_timeout"), { code: "TIMEOUT" });
       child = await spawnAcpChild(spawnImpl, command, cwd);
+      // Correlate transient Windows consoles with adapter connections without
+      // logging command arguments, environment variables or credential paths.
+      const processDiagnostic = (event, details = {}) => {
+        try { options.onProcessDiagnostic?.({ event, requestId, pid: child.pid, ...details }); } catch { /* diagnostics are optional */ }
+      };
+      processDiagnostic("spawned");
+      child.once("exit", (code, signal) => processDiagnostic("exited", { code, signal }));
       if (signal?.aborted) throw Object.assign(new Error("connection_timeout"), { code: "TIMEOUT" });
       // Drain stderr even when no logger is configured. Bound each connection's
       // diagnostic output and sanitize before crossing into the log callback.
@@ -869,11 +876,11 @@ export function createAcpHostRuntime(options = {}) {
     clearAdapterStatus(id) { latestStatus.delete(id); },
     listAdapters(configuredPaths = {}) {
       return ["codex", "claudeCode", "antigravity", "openClaw", "hermesAgent", "grokBuild", "deepseekHarness", "piAgent", "workbuddyCn", "workbuddyIntl"].map((id) => {
-        if (installingIds.has(id)) return { ...adapterShell(id), state: "installing" };
+        if (installingIds.has(id)) return { ...adapterShell(id), state: "installing", ...(manager?.get(id) ? { managed: true, version: manager.get(id).version } : {}), ...(updateFailures.has(id) ? { updateError: updateFailures.get(id) } : {}) };
         const customPath = configuredPaths[id];
         const resolved = resolveCommand({ id, path: customPath }, { prepareProxy: false });
         return resolved.ok
-          ? { ...adapterShell(id), ...(latestStatus.get(id) ?? { state: "not_probed", detail: "not_probed" }), ...(resolved.version ? { version: resolved.version, managed: true } : {}), ...(customPath ? { customPath, managed: false, version: undefined } : {}), ...(updateFailures.has(id) ? { updateError: updateFailures.get(id) } : {}) }
+          ? { ...adapterShell(id), ...(latestStatus.get(id) ?? { state: "not_probed", detail: "not_probed" }), ...(resolved.version ? { version: resolved.version, managed: true } : {}), ...(customPath ? { customPath, managed: false, version: undefined } : {}), ...(!customPath && updateFailures.has(id) ? { updateError: updateFailures.get(id) } : {}) }
           : adapterFromResolution(id, resolved);
       });
     },
@@ -900,7 +907,13 @@ export function createAcpHostRuntime(options = {}) {
           }
         }, { updateOnly });
         if (result.adapter) latestStatus.set(id, result.adapter);
+        updateFailures.delete(id);
         return result;
+      } catch (error) {
+        const reason = sanitizeFailureDetail(`${error.updateStage ? `${error.updateStage}: ` : ""}${error.message ?? error}${error.cause?.code ? ` (${error.cause.code})` : ""}`);
+        updateFailures.set(id, reason);
+        try { options.onUpdateDiagnostic?.({ id, reason }); } catch { /* diagnostics are optional */ }
+        throw new Error(reason);
       } finally {
         installingIds.delete(id);
       }
@@ -928,11 +941,9 @@ export function createAcpHostRuntime(options = {}) {
         if (id === "piAgent" && !localExecutable("pi", resolutionDeps(commandDeps))) continue;
         try {
           const result = await this.installAdapter(id, { updateOnly: true });
-          updateFailures.delete(id);
           results.push({ id, ...result });
         } catch (error) {
           const reason = sanitizeFailureDetail(error);
-          updateFailures.set(id, reason);
           results.push({ id, updated: false, reason });
         }
       }
@@ -952,7 +963,7 @@ export function createAcpHostRuntime(options = {}) {
       try {
         connected = await withHandshakeTimeout((signal) => connect(resolved.command, `probe-${id}`, () => {}, signal, undefined, [], false, null, id === "workbuddyCn" || id === "workbuddyIntl"));
       } catch (error) {
-        const failure = { ...adapterShell(id), ...failureFields(classifyAcpFailure(error)), ...(isAuthRequiredError(error) ? { authMethods: error.authMethods ?? [] } : {}), ...(resolved.version ? { version: resolved.version, managed: true } : {}) };
+        const failure = { ...adapterShell(id), ...failureFields(classifyAcpFailure(error)), ...(error.authMethods?.length ? { authMethods: error.authMethods } : {}), ...(resolved.version ? { version: resolved.version, managed: true } : {}) };
         latestStatus.set(id, failure);
         return failure;
       }
@@ -996,7 +1007,7 @@ export function createAcpHostRuntime(options = {}) {
         const adapter = {
           ...adapterShell(id),
           ...(timedOut ? { state: "needs_login", detail: "authentication_timeout" } : error?.message === "authentication_failed" ? { state: "needs_login", detail: "authentication_failed" } : failureFields(classifyAcpFailure(error))),
-          ...((timedOut || isAuthRequiredError(error)) ? { authMethods: error.authMethods ?? latestStatus.get(id)?.authMethods ?? [] } : {}),
+          ...(error.authMethods?.length || timedOut || isAuthRequiredError(error) ? { authMethods: error.authMethods ?? latestStatus.get(id)?.authMethods ?? [] } : {}),
           ...(resolved.version ? { version: resolved.version, managed: true } : {}),
         };
         latestStatus.set(id, adapter);
