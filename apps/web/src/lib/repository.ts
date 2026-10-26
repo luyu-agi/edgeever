@@ -1,6 +1,7 @@
+import type { NotebookUpdateInput } from "@edgeever/shared";
 import { assertLocalMemoSnapshot } from "./local-memo-guard";
 import { localizeDefaultMemoTemplate } from "@edgeever/shared/memo-template-seeds";
-import { markdownToDoc, type MemoDetail, type MemoRevision, type MemoSummary, type MemoTemplate, type Notebook, type Resource, type ResourceListItem, type ResourceStorageSummary, type TagSummary, type TiptapDoc } from "@edgeever/shared";
+import { markdownToDoc, type MemoDetail, type MemoRevision, type MemoTemplate, type Notebook, type Resource, type ResourceListItem, type ResourceStorageSummary, type TagSummary, type TiptapDoc } from "@edgeever/shared";
 import { api } from "@/lib/api";
 import {
   getLocalMemo,
@@ -56,7 +57,7 @@ import { withRepositoryMutationEvents } from "@/lib/repository-events";
 export type EdgeEverRepository = {
   listNotebooks(): Promise<{ notebooks: Notebook[] }>;
   createNotebook(input: { name: string; parentId?: string | null }): Promise<{ notebook: Notebook }>;
-  updateNotebook(notebookId: string, input: { name?: string; parentId?: string | null; sortOrder?: number }): Promise<{ notebook: Notebook }>;
+  updateNotebook(notebookId: string, input: NotebookUpdateInput): Promise<{ notebook: Notebook }>;
   deleteNotebook(notebookId: string): Promise<{ ok: true }>;
   restoreNotebook(notebookId: string): Promise<{ notebook: Notebook }>;
   listTemplates(): Promise<{ templates: MemoTemplate[] }>;
@@ -79,6 +80,11 @@ export type EdgeEverRepository = {
   emptyTrash(): Promise<{ ok: true; deleted: number }>;
   pinMemos(input: { memoIds: string[]; isPinned: boolean }): Promise<{ ok: true; updated: number }>;
   mergeMemos(input: { memoIds: string[]; notebookId?: string; title?: string }): Promise<{ memo: MemoDetail }>;
+  /**
+   * Copies a note, its tags and its files on the server. Requires a connection;
+   * local edits of the note are synchronized first so the copy includes them.
+   */
+  duplicateMemo(memoId: string, input?: { notebookId?: string; title?: string }): Promise<{ memo: MemoDetail }>;
   listMemos(params: LocalMemoListParams): Promise<LocalMemoListResponse>;
   getMemo(memoId: string, includeDeleted?: boolean): Promise<{ memo: MemoDetail }>;
   createMemo(input: { notebookId: string; title?: string; contentJson?: TiptapDoc; contentMarkdown?: string; tags?: string[] }): Promise<{ memo: MemoDetail }>;
@@ -440,6 +446,22 @@ export const createWebRepository = (scope: string): EdgeEverRepository => {
     await queueLocalAction(scope, "memo.merge", memo.id, { ...input, temporaryId: memo.id });
     window.dispatchEvent(new CustomEvent("edgeever:sync-queue-changed"));
     return { memo };
+  },
+
+  duplicateMemo: async (memoId, input = {}) => {
+    if (isOffline()) throw new Error("memo_duplicate_offline");
+    // The server copies what it stores, so every queued change of the note,
+    // including an unresolved conflict, must reach it first.
+    const hasQueuedChange = async () => (await localDb.syncQueue.where("memoId").equals(memoId).toArray())
+      .some((item) => !item.scope || item.scope === scope);
+    if (await hasQueuedChange()) {
+      // A failed synchronization leaves the change queued, which is reported below.
+      await syncLocalMirror(scope).catch(() => undefined);
+      if (await hasQueuedChange()) throw new Error("memo_duplicate_pending_changes");
+    }
+    const result = await api.duplicateMemo(memoId, input);
+    await putLocalMemo(scope, result.memo);
+    return result;
   },
 
   async listMemos(params) {
