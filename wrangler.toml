@@ -33,7 +33,7 @@ bucket_name = "edgeever-resources"
 preview_bucket_name = "edgeever-resources-preview"
 
 [observability]
-enabled = true
+enabled = false
 
 [version_metadata]
 binding = "CF_VERSION_METADATA"
